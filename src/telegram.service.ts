@@ -1,4 +1,64 @@
-import TelegramBot from 'node-telegram-bot-api';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const TelegramBot = require('node-telegram-bot-api');
+
+// Type definitions from node-telegram-bot-api
+interface InlineKeyboardButton {
+  text: string;
+  callback_data?: string;
+  url?: string;
+}
+
+interface InlineKeyboardMarkup {
+  inline_keyboard: InlineKeyboardButton[][];
+}
+
+interface CallbackQuery {
+  id: string;
+  from: {
+    id: number;
+    is_bot: boolean;
+    first_name: string;
+    username?: string;
+    language_code?: string;
+  };
+  message?: {
+    message_id: number;
+    chat: {
+      id: number;
+      type: string;
+    };
+  };
+  data?: string;
+}
+
+// Message type from Telegram
+interface TelegramMessage {
+  message_id: number;
+  from?: {
+    id: number;
+    is_bot: boolean;
+    first_name: string;
+    last_name?: string;
+    username?: string;
+    language_code?: string;
+  };
+  chat: {
+    id: number;
+    type: 'private' | 'group' | 'supergroup' | 'channel';
+    title?: string;
+    username?: string;
+  };
+  date: number;
+  text?: string;
+  caption?: string;
+  photo?: Array<{ file_id: string; file_unique_id: string; width: number; height: number }>;
+  video?: { file_id: string };
+  document?: { file_id: string };
+  audio?: { file_id: string };
+  reply_to_message?: { message_id: number };
+  forward_from_chat?: { title?: string };
+  forward_from?: { username?: string };
+}
 import { EventBus, EventType, eventBus } from './events';
 import { AlphaSignalInsert, AlphaSourceType } from './database.types';
 
@@ -7,7 +67,35 @@ export interface TelegramConfig {
   watchedChatIds?: string[];
   enabled: boolean;
   polling?: boolean;
+  botName?: string;
+  botDescription?: string;
 }
+
+// User subscription preferences
+export interface UserSubscription {
+  chatId: string;
+  userId: string;
+  username: string;
+  subscribedAt: Date;
+  alertTypes: {
+    tokenLaunches: boolean;
+    highPrioritySignals: boolean;
+    systemAlerts: boolean;
+  };
+  isActive: boolean;
+}
+
+// Button callback data types
+export type CallbackAction =
+  | 'subscribe'
+  | 'unsubscribe'
+  | 'settings'
+  | 'help'
+  | 'status'
+  | 'toggle_launches'
+  | 'toggle_signals'
+  | 'toggle_system'
+  | 'back_main';
 
 export interface TelegramMessageData {
   id: string;
@@ -30,17 +118,642 @@ export interface TelegramMessageData {
  * Telegram monitoring service for alpha signal aggregation
  */
 export class TelegramService {
-  private bot: TelegramBot | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private bot: any = null;
   private config: TelegramConfig;
   private eventBus: EventBus;
   private watchedChats: Set<string>;
   private isRunning: boolean = false;
   private onMessageHandler: ((message: TelegramMessageData) => Promise<void>) | null = null;
+  private subscriptions: Map<string, UserSubscription> = new Map();
+  private botUsername: string = '';
 
   constructor(config: TelegramConfig, bus: EventBus = eventBus) {
     this.config = config;
     this.eventBus = bus;
     this.watchedChats = new Set(config.watchedChatIds || []);
+  }
+
+  // ============================================
+  // INLINE KEYBOARD BUILDERS
+  // ============================================
+
+  /**
+   * Create the main menu keyboard
+   */
+  private createMainMenuKeyboard(): InlineKeyboardMarkup {
+    return {
+      inline_keyboard: [
+        [
+          { text: '🔔 Subscribe', callback_data: 'subscribe' },
+          { text: '🔕 Unsubscribe', callback_data: 'unsubscribe' },
+        ],
+        [
+          { text: '⚙️ Settings', callback_data: 'settings' },
+          { text: '📊 Status', callback_data: 'status' },
+        ],
+        [
+          { text: '❓ Help', callback_data: 'help' },
+        ],
+      ],
+    };
+  }
+
+  /**
+   * Create settings menu keyboard
+   */
+  private createSettingsKeyboard(subscription: UserSubscription | undefined): InlineKeyboardMarkup {
+    const launches = subscription?.alertTypes.tokenLaunches ?? true;
+    const signals = subscription?.alertTypes.highPrioritySignals ?? true;
+    const system = subscription?.alertTypes.systemAlerts ?? false;
+
+    return {
+      inline_keyboard: [
+        [
+          {
+            text: `${launches ? '✅' : '❌'} Token Launches`,
+            callback_data: 'toggle_launches',
+          },
+        ],
+        [
+          {
+            text: `${signals ? '✅' : '❌'} High Priority Signals`,
+            callback_data: 'toggle_signals',
+          },
+        ],
+        [
+          {
+            text: `${system ? '✅' : '❌'} System Alerts`,
+            callback_data: 'toggle_system',
+          },
+        ],
+        [
+          { text: '⬅️ Back to Menu', callback_data: 'back_main' },
+        ],
+      ],
+    };
+  }
+
+  // ============================================
+  // BOT COMMANDS
+  // ============================================
+
+  /**
+   * Setup bot commands
+   */
+  private async setupCommands(): Promise<void> {
+    if (!this.bot) return;
+
+    // Set bot commands in Telegram
+    await this.bot.setMyCommands([
+      { command: 'start', description: 'Start the bot and see welcome message' },
+      { command: 'help', description: 'Get help and command list' },
+      { command: 'status', description: 'Check bot and service status' },
+      { command: 'subscribe', description: 'Subscribe to alerts' },
+      { command: 'unsubscribe', description: 'Unsubscribe from alerts' },
+      { command: 'settings', description: 'Manage your notification settings' },
+    ]);
+
+    // Register command handlers
+    this.bot.onText(/\/start/, (msg: any) => this.handleStartCommand(msg));
+    this.bot.onText(/\/help/, (msg: any) => this.handleHelpCommand(msg));
+    this.bot.onText(/\/status/, (msg: any) => this.handleStatusCommand(msg));
+    this.bot.onText(/\/subscribe/, (msg: any) => this.handleSubscribeCommand(msg));
+    this.bot.onText(/\/unsubscribe/, (msg: any) => this.handleUnsubscribeCommand(msg));
+    this.bot.onText(/\/settings/, (msg: any) => this.handleSettingsCommand(msg));
+
+    // Register callback query handler for buttons
+    this.bot.on('callback_query', (query: any) => this.handleCallbackQuery(query));
+  }
+
+  /**
+   * Handle /start command - Welcome message with introduction
+   */
+  private async handleStartCommand(msg: TelegramMessage): Promise<void> {
+    if (!this.bot) return;
+
+    const chatId = msg.chat.id;
+    const username = msg.from?.username || msg.from?.first_name || 'there';
+    const botName = this.config.botName || 'Alpha Signal Bot';
+
+    const welcomeMessage = `
+🚀 *Welcome to ${botName}!*
+
+Hey @${username}! I'm your personal crypto alpha aggregator bot.
+
+*What I do:*
+• 📡 Monitor multiple sources for trading signals
+• 🎯 Detect token launches and opportunities
+• 🔔 Send real-time alerts to subscribers
+• 📊 Track and classify alpha from Discord, Telegram, Reddit & Twitter
+
+*Quick Start:*
+1️⃣ Hit *Subscribe* to start receiving alerts
+2️⃣ Go to *Settings* to customize what you receive
+3️⃣ Check *Status* to see what's being monitored
+
+Use the buttons below or type /help for commands.
+    `.trim();
+
+    await this.bot.sendMessage(chatId, welcomeMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: this.createMainMenuKeyboard(),
+    });
+  }
+
+  /**
+   * Handle /help command
+   */
+  private async handleHelpCommand(msg: TelegramMessage): Promise<void> {
+    if (!this.bot) return;
+
+    const helpMessage = `
+📚 *Available Commands*
+
+/start - Start the bot and see welcome message
+/help - Show this help message
+/status - Check bot and monitoring status
+/subscribe - Subscribe to receive alerts
+/unsubscribe - Stop receiving alerts
+/settings - Customize your notification preferences
+
+*Alert Types:*
+• 🚀 *Token Launches* - New token deployments
+• 🎯 *High Priority Signals* - Strong alpha opportunities
+• ⚙️ *System Alerts* - Service status updates
+
+*Need Support?*
+Visit our GitHub for issues and updates.
+    `.trim();
+
+    await this.bot.sendMessage(msg.chat.id, helpMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: this.createMainMenuKeyboard(),
+    });
+  }
+
+  /**
+   * Handle /status command
+   */
+  private async handleStatusCommand(msg: TelegramMessage): Promise<void> {
+    if (!this.bot) return;
+
+    const chatId = msg.chat.id.toString();
+    const subscription = this.subscriptions.get(chatId);
+    const subscriberCount = this.subscriptions.size;
+    const watchedChatsCount = this.watchedChats.size;
+
+    const statusEmoji = this.isRunning ? '🟢' : '🔴';
+    const subscriptionStatus = subscription?.isActive ? '✅ Subscribed' : '❌ Not subscribed';
+
+    const statusMessage = `
+📊 *Bot Status*
+
+${statusEmoji} *Service:* ${this.isRunning ? 'Online' : 'Offline'}
+👤 *Your Status:* ${subscriptionStatus}
+📢 *Total Subscribers:* ${subscriberCount}
+👁 *Watched Chats:* ${watchedChatsCount}
+🤖 *Bot:* @${this.botUsername || 'unknown'}
+
+${subscription?.isActive ? `
+*Your Settings:*
+• Token Launches: ${subscription.alertTypes.tokenLaunches ? '✅' : '❌'}
+• High Priority Signals: ${subscription.alertTypes.highPrioritySignals ? '✅' : '❌'}
+• System Alerts: ${subscription.alertTypes.systemAlerts ? '✅' : '❌'}
+` : ''}
+    `.trim();
+
+    await this.bot.sendMessage(msg.chat.id, statusMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: this.createMainMenuKeyboard(),
+    });
+  }
+
+  /**
+   * Handle /subscribe command
+   */
+  private async handleSubscribeCommand(msg: TelegramMessage): Promise<void> {
+    if (!this.bot) return;
+
+    const chatId = msg.chat.id.toString();
+    const userId = msg.from?.id.toString() || 'unknown';
+    const username = msg.from?.username || msg.from?.first_name || 'unknown';
+
+    // Create or update subscription
+    const existing = this.subscriptions.get(chatId);
+    const subscription: UserSubscription = {
+      chatId,
+      userId,
+      username,
+      subscribedAt: existing?.subscribedAt || new Date(),
+      alertTypes: existing?.alertTypes || {
+        tokenLaunches: true,
+        highPrioritySignals: true,
+        systemAlerts: false,
+      },
+      isActive: true,
+    };
+
+    this.subscriptions.set(chatId, subscription);
+
+    const message = `
+🔔 *Subscribed Successfully!*
+
+You're now subscribed to alerts, @${username}!
+
+*Current Settings:*
+• Token Launches: ${subscription.alertTypes.tokenLaunches ? '✅' : '❌'}
+• High Priority Signals: ${subscription.alertTypes.highPrioritySignals ? '✅' : '❌'}
+• System Alerts: ${subscription.alertTypes.systemAlerts ? '✅' : '❌'}
+
+Use /settings to customize what alerts you receive.
+    `.trim();
+
+    await this.bot.sendMessage(msg.chat.id, message, {
+      parse_mode: 'Markdown',
+      reply_markup: this.createMainMenuKeyboard(),
+    });
+
+    console.log(`[Telegram] User @${username} subscribed (chat: ${chatId})`);
+  }
+
+  /**
+   * Handle /unsubscribe command
+   */
+  private async handleUnsubscribeCommand(msg: TelegramMessage): Promise<void> {
+    if (!this.bot) return;
+
+    const chatId = msg.chat.id.toString();
+    const existing = this.subscriptions.get(chatId);
+
+    if (existing) {
+      existing.isActive = false;
+      this.subscriptions.set(chatId, existing);
+    }
+
+    const message = `
+🔕 *Unsubscribed*
+
+You've been unsubscribed from alerts.
+
+You can re-subscribe anytime using /subscribe or the button below.
+    `.trim();
+
+    await this.bot.sendMessage(msg.chat.id, message, {
+      parse_mode: 'Markdown',
+      reply_markup: this.createMainMenuKeyboard(),
+    });
+
+    console.log(`[Telegram] User unsubscribed (chat: ${chatId})`);
+  }
+
+  /**
+   * Handle /settings command
+   */
+  private async handleSettingsCommand(msg: TelegramMessage): Promise<void> {
+    if (!this.bot) return;
+
+    const chatId = msg.chat.id.toString();
+    const subscription = this.subscriptions.get(chatId);
+
+    const message = `
+⚙️ *Notification Settings*
+
+Tap the buttons below to toggle each alert type.
+
+${!subscription?.isActive ? '⚠️ *Note:* You are currently unsubscribed. Subscribe first to receive alerts.' : ''}
+    `.trim();
+
+    await this.bot.sendMessage(msg.chat.id, message, {
+      parse_mode: 'Markdown',
+      reply_markup: this.createSettingsKeyboard(subscription),
+    });
+  }
+
+  // ============================================
+  // CALLBACK QUERY HANDLER (Button clicks)
+  // ============================================
+
+  /**
+   * Handle button callback queries
+   */
+  private async handleCallbackQuery(query: CallbackQuery): Promise<void> {
+    if (!this.bot || !query.message || !query.data) return;
+
+    const chatId = query.message.chat.id;
+    const messageId = query.message.message_id;
+    const action = query.data as CallbackAction;
+
+    // Acknowledge the callback
+    await this.bot.answerCallbackQuery(query.id);
+
+    switch (action) {
+      case 'subscribe':
+        await this.handleSubscribeCallback(chatId, query);
+        break;
+      case 'unsubscribe':
+        await this.handleUnsubscribeCallback(chatId, query);
+        break;
+      case 'settings':
+        await this.handleSettingsCallback(chatId, messageId);
+        break;
+      case 'help':
+        await this.handleHelpCallback(chatId, messageId);
+        break;
+      case 'status':
+        await this.handleStatusCallback(chatId, messageId);
+        break;
+      case 'toggle_launches':
+      case 'toggle_signals':
+      case 'toggle_system':
+        await this.handleToggleCallback(chatId, messageId, action);
+        break;
+      case 'back_main':
+        await this.handleBackToMainCallback(chatId, messageId);
+        break;
+    }
+  }
+
+  private async handleSubscribeCallback(chatId: number, query: CallbackQuery): Promise<void> {
+    if (!this.bot) return;
+
+    const chatIdStr = chatId.toString();
+    const userId = query.from.id.toString();
+    const username = query.from.username || query.from.first_name || 'unknown';
+
+    const existing = this.subscriptions.get(chatIdStr);
+    const subscription: UserSubscription = {
+      chatId: chatIdStr,
+      userId,
+      username,
+      subscribedAt: existing?.subscribedAt || new Date(),
+      alertTypes: existing?.alertTypes || {
+        tokenLaunches: true,
+        highPrioritySignals: true,
+        systemAlerts: false,
+      },
+      isActive: true,
+    };
+
+    this.subscriptions.set(chatIdStr, subscription);
+
+    await this.bot.sendMessage(chatId, `🔔 *Subscribed!* You'll now receive alerts.`, {
+      parse_mode: 'Markdown',
+      reply_markup: this.createMainMenuKeyboard(),
+    });
+
+    console.log(`[Telegram] User @${username} subscribed via button`);
+  }
+
+  private async handleUnsubscribeCallback(chatId: number, query: CallbackQuery): Promise<void> {
+    if (!this.bot) return;
+
+    const chatIdStr = chatId.toString();
+    const existing = this.subscriptions.get(chatIdStr);
+
+    if (existing) {
+      existing.isActive = false;
+      this.subscriptions.set(chatIdStr, existing);
+    }
+
+    await this.bot.sendMessage(chatId, `🔕 *Unsubscribed.* You won't receive alerts anymore.`, {
+      parse_mode: 'Markdown',
+      reply_markup: this.createMainMenuKeyboard(),
+    });
+  }
+
+  private async handleSettingsCallback(chatId: number, messageId: number): Promise<void> {
+    if (!this.bot) return;
+
+    const subscription = this.subscriptions.get(chatId.toString());
+
+    await this.bot.editMessageText(
+      `⚙️ *Notification Settings*\n\nTap to toggle each alert type:`,
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: this.createSettingsKeyboard(subscription),
+      }
+    );
+  }
+
+  private async handleHelpCallback(chatId: number, messageId: number): Promise<void> {
+    if (!this.bot) return;
+
+    const helpText = `
+📚 *Commands*
+
+/start - Welcome & menu
+/subscribe - Get alerts
+/unsubscribe - Stop alerts
+/settings - Alert preferences
+/status - Bot status
+    `.trim();
+
+    await this.bot.editMessageText(helpText, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: this.createMainMenuKeyboard(),
+    });
+  }
+
+  private async handleStatusCallback(chatId: number, messageId: number): Promise<void> {
+    if (!this.bot) return;
+
+    const subscription = this.subscriptions.get(chatId.toString());
+    const statusEmoji = this.isRunning ? '🟢' : '🔴';
+
+    const statusText = `
+📊 *Status*
+
+${statusEmoji} Service: ${this.isRunning ? 'Online' : 'Offline'}
+👤 You: ${subscription?.isActive ? '✅ Subscribed' : '❌ Not subscribed'}
+📢 Subscribers: ${this.subscriptions.size}
+    `.trim();
+
+    await this.bot.editMessageText(statusText, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: this.createMainMenuKeyboard(),
+    });
+  }
+
+  private async handleToggleCallback(chatId: number, messageId: number, action: string): Promise<void> {
+    if (!this.bot) return;
+
+    const chatIdStr = chatId.toString();
+    let subscription = this.subscriptions.get(chatIdStr);
+
+    if (!subscription) {
+      // Auto-create subscription if toggling settings
+      subscription = {
+        chatId: chatIdStr,
+        userId: 'unknown',
+        username: 'unknown',
+        subscribedAt: new Date(),
+        alertTypes: {
+          tokenLaunches: true,
+          highPrioritySignals: true,
+          systemAlerts: false,
+        },
+        isActive: true,
+      };
+    }
+
+    // Toggle the appropriate setting
+    switch (action) {
+      case 'toggle_launches':
+        subscription.alertTypes.tokenLaunches = !subscription.alertTypes.tokenLaunches;
+        break;
+      case 'toggle_signals':
+        subscription.alertTypes.highPrioritySignals = !subscription.alertTypes.highPrioritySignals;
+        break;
+      case 'toggle_system':
+        subscription.alertTypes.systemAlerts = !subscription.alertTypes.systemAlerts;
+        break;
+    }
+
+    this.subscriptions.set(chatIdStr, subscription);
+
+    // Update the message with new keyboard
+    await this.bot.editMessageReplyMarkup(this.createSettingsKeyboard(subscription), {
+      chat_id: chatId,
+      message_id: messageId,
+    });
+  }
+
+  private async handleBackToMainCallback(chatId: number, messageId: number): Promise<void> {
+    if (!this.bot) return;
+
+    const botName = this.config.botName || 'Alpha Signal Bot';
+
+    await this.bot.editMessageText(
+      `🚀 *${botName}*\n\nWhat would you like to do?`,
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: this.createMainMenuKeyboard(),
+      }
+    );
+  }
+
+  // ============================================
+  // BROADCAST METHODS
+  // ============================================
+
+  /**
+   * Broadcast a message to all active subscribers
+   */
+  async broadcastToSubscribers(
+    message: string,
+    alertType: 'tokenLaunches' | 'highPrioritySignals' | 'systemAlerts',
+    options?: { parseMode?: 'Markdown' | 'HTML' }
+  ): Promise<{ sent: number; failed: number }> {
+    if (!this.bot) return { sent: 0, failed: 0 };
+
+    let sent = 0;
+    let failed = 0;
+
+    const entries = Array.from(this.subscriptions.entries());
+    for (let i = 0; i < entries.length; i++) {
+      const [chatId, subscription] = entries[i];
+      if (!subscription.isActive) continue;
+      if (!subscription.alertTypes[alertType]) continue;
+
+      try {
+        await this.bot.sendMessage(chatId, message, {
+          parse_mode: options?.parseMode || 'Markdown',
+        });
+        sent++;
+      } catch (error) {
+        console.error(`[Telegram] Failed to send to ${chatId}:`, error);
+        failed++;
+      }
+    }
+
+    return { sent, failed };
+  }
+
+  /**
+   * Send a token launch alert
+   */
+  async sendTokenLaunchAlert(tokenData: {
+    name: string;
+    symbol: string;
+    address?: string;
+    source: string;
+    confidence: number;
+  }): Promise<void> {
+    const message = `
+🚀 *New Token Launch Detected!*
+
+*Name:* ${tokenData.name}
+*Symbol:* $${tokenData.symbol}
+${tokenData.address ? `*Address:* \`${tokenData.address}\`` : ''}
+*Source:* ${tokenData.source}
+*Confidence:* ${(tokenData.confidence * 100).toFixed(1)}%
+
+⚠️ DYOR - Not financial advice
+    `.trim();
+
+    await this.broadcastToSubscribers(message, 'tokenLaunches');
+  }
+
+  /**
+   * Send a high priority signal alert
+   */
+  async sendSignalAlert(signalData: {
+    content: string;
+    source: string;
+    author: string;
+    priority: string;
+    tickers?: string[];
+  }): Promise<void> {
+    const tickersStr = signalData.tickers?.length
+      ? `\n*Tickers:* ${signalData.tickers.map(t => `$${t}`).join(', ')}`
+      : '';
+
+    const message = `
+🎯 *High Priority Signal*
+
+*Source:* ${signalData.source}
+*Author:* ${signalData.author}
+*Priority:* ${signalData.priority}${tickersStr}
+
+${signalData.content.substring(0, 500)}${signalData.content.length > 500 ? '...' : ''}
+    `.trim();
+
+    await this.broadcastToSubscribers(message, 'highPrioritySignals');
+  }
+
+  // ============================================
+  // SUBSCRIPTION GETTERS
+  // ============================================
+
+  /**
+   * Get all active subscribers
+   */
+  getActiveSubscribers(): UserSubscription[] {
+    return Array.from(this.subscriptions.values()).filter(s => s.isActive);
+  }
+
+  /**
+   * Get subscriber count
+   */
+  getSubscriberCount(): number {
+    return this.getActiveSubscribers().length;
+  }
+
+  /**
+   * Check if a chat is subscribed
+   */
+  isSubscribed(chatId: string): boolean {
+    const sub = this.subscriptions.get(chatId);
+    return sub?.isActive ?? false;
   }
 
   /**
@@ -76,7 +789,7 @@ export class TelegramService {
   /**
    * Handle incoming Telegram message
    */
-  private async handleMessage(msg: TelegramBot.Message): Promise<void> {
+  private async handleMessage(msg: TelegramMessage): Promise<void> {
     // Check if chat is being watched (empty set = watch all)
     const chatIdStr = msg.chat.id.toString();
     if (this.watchedChats.size > 0 && !this.watchedChats.has(chatIdStr)) {
@@ -154,7 +867,7 @@ export class TelegramService {
   /**
    * Handle channel posts
    */
-  private async handleChannelPost(msg: TelegramBot.Message): Promise<void> {
+  private async handleChannelPost(msg: TelegramMessage): Promise<void> {
     // Channel posts don't have a "from" user, use the channel info instead
     const chatIdStr = msg.chat.id.toString();
     if (this.watchedChats.size > 0 && !this.watchedChats.has(chatIdStr)) {
@@ -243,17 +956,23 @@ export class TelegramService {
         polling: this.config.polling !== false, // Default to polling
       });
 
-      // Set up message handlers
-      this.bot.on('message', async (msg) => {
+      // Setup bot commands and callbacks first
+      await this.setupCommands();
+      console.log('[Telegram] Bot commands registered');
+
+      // Set up message handlers for alpha monitoring
+      this.bot.on('message', async (msg: any) => {
+        // Skip command messages from being processed as alpha signals
+        if (msg.text?.startsWith('/')) return;
         await this.handleMessage(msg);
       });
 
-      this.bot.on('channel_post', async (msg) => {
+      this.bot.on('channel_post', async (msg: any) => {
         await this.handleChannelPost(msg);
       });
 
       // Error handling
-      this.bot.on('polling_error', (error) => {
+      this.bot.on('polling_error', (error: any) => {
         console.error('[Telegram] Polling error:', error);
         this.eventBus.emit(EventType.SYSTEM_ERROR, {
           source: 'telegram',
@@ -261,7 +980,7 @@ export class TelegramService {
         });
       });
 
-      this.bot.on('error', (error) => {
+      this.bot.on('error', (error: any) => {
         console.error('[Telegram] Error:', error);
         this.eventBus.emit(EventType.SYSTEM_ERROR, {
           source: 'telegram',
@@ -271,6 +990,7 @@ export class TelegramService {
 
       // Get bot info
       const botInfo = await this.bot.getMe();
+      this.botUsername = botInfo.username || '';
       console.log(`[Telegram] Bot logged in as @${botInfo.username}`);
       this.isRunning = true;
 
