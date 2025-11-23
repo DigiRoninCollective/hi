@@ -146,7 +146,7 @@ export class RedditService {
             ? post.thumbnail
             : null,
           flair: post.link_flair_text || null,
-          awards: post.total_awards_received || 0,
+          awards: (post as any).total_awards_received || 0,
         };
 
         console.log(`[Reddit] New post in r/${postData.subreddit}: ${postData.title.substring(0, 50)}...`);
@@ -262,7 +262,7 @@ export class RedditService {
       });
 
       // Test connection
-      const me = await this.reddit.getMe();
+      const me = await (this.reddit as any).getMe();
       console.log(`[Reddit] Logged in as u/${me.name}`);
 
       this.isRunning = true;
@@ -322,7 +322,7 @@ export class RedditService {
   async getAccountInfo(): Promise<{ username: string; karma: number } | null> {
     if (!this.reddit) return null;
     try {
-      const me = await this.reddit.getMe();
+      const me = await (this.reddit as any).getMe();
       return {
         username: me.name,
         karma: me.link_karma + me.comment_karma,
@@ -344,14 +344,14 @@ export class RedditService {
     if (!this.reddit) return [];
 
     try {
-      const posts = await this.reddit.getSubreddit(subreddit).search({
+      const posts = await (this.reddit as any).getSubreddit(subreddit).search({
         query,
         limit: options.limit || 25,
         sort: options.sort || 'new',
         time: 'day',
-      });
+      } as any);
 
-      return posts.map((post) => ({
+      return posts.map((post: any) => ({
         id: post.id,
         title: post.title,
         content: post.selftext || '',
@@ -369,7 +369,7 @@ export class RedditService {
           ? post.thumbnail
           : null,
         flair: post.link_flair_text || null,
-        awards: post.total_awards_received || 0,
+        awards: (post as any).total_awards_received || 0,
       }));
     } catch (error) {
       console.error('[Reddit] Error searching posts:', error);

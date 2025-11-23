@@ -215,15 +215,15 @@ export class TelegramService {
     ]);
 
     // Register command handlers
-    this.bot.onText(/\/start/, (msg) => this.handleStartCommand(msg));
-    this.bot.onText(/\/help/, (msg) => this.handleHelpCommand(msg));
-    this.bot.onText(/\/status/, (msg) => this.handleStatusCommand(msg));
-    this.bot.onText(/\/subscribe/, (msg) => this.handleSubscribeCommand(msg));
-    this.bot.onText(/\/unsubscribe/, (msg) => this.handleUnsubscribeCommand(msg));
-    this.bot.onText(/\/settings/, (msg) => this.handleSettingsCommand(msg));
+    this.bot.onText(/\/start/, (msg: any) => this.handleStartCommand(msg));
+    this.bot.onText(/\/help/, (msg: any) => this.handleHelpCommand(msg));
+    this.bot.onText(/\/status/, (msg: any) => this.handleStatusCommand(msg));
+    this.bot.onText(/\/subscribe/, (msg: any) => this.handleSubscribeCommand(msg));
+    this.bot.onText(/\/unsubscribe/, (msg: any) => this.handleUnsubscribeCommand(msg));
+    this.bot.onText(/\/settings/, (msg: any) => this.handleSettingsCommand(msg));
 
     // Register callback query handler for buttons
-    this.bot.on('callback_query', (query) => this.handleCallbackQuery(query));
+    this.bot.on('callback_query', (query: any) => this.handleCallbackQuery(query));
   }
 
   /**
@@ -961,18 +961,18 @@ ${signalData.content.substring(0, 500)}${signalData.content.length > 500 ? '...'
       console.log('[Telegram] Bot commands registered');
 
       // Set up message handlers for alpha monitoring
-      this.bot.on('message', async (msg) => {
+      this.bot.on('message', async (msg: any) => {
         // Skip command messages from being processed as alpha signals
         if (msg.text?.startsWith('/')) return;
         await this.handleMessage(msg);
       });
 
-      this.bot.on('channel_post', async (msg) => {
+      this.bot.on('channel_post', async (msg: any) => {
         await this.handleChannelPost(msg);
       });
 
       // Error handling
-      this.bot.on('polling_error', (error) => {
+      this.bot.on('polling_error', (error: any) => {
         console.error('[Telegram] Polling error:', error);
         this.eventBus.emit(EventType.SYSTEM_ERROR, {
           source: 'telegram',
@@ -980,7 +980,7 @@ ${signalData.content.substring(0, 500)}${signalData.content.length > 500 ? '...'
         });
       });
 
-      this.bot.on('error', (error) => {
+      this.bot.on('error', (error: any) => {
         console.error('[Telegram] Error:', error);
         this.eventBus.emit(EventType.SYSTEM_ERROR, {
           source: 'telegram',

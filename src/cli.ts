@@ -7,9 +7,38 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
+const fetch = require('node-fetch');
+const PUMPPORTAL_API_URL = 'https://pumpportal.fun/api';
+
 // ============================================
 // TYPES
 // ============================================
+
+interface TokenMetadata {
+  name: string;
+  symbol: string;
+  description: string;
+  imageUrl?: string;
+  twitter?: string;
+  telegram?: string;
+  website?: string;
+}
+
+interface LaunchConfig {
+  metadata: TokenMetadata;
+  initialBuySol: number;
+  slippage: number;
+  priorityFee: number;
+  autoBuy: {
+    enabled: boolean;
+    walletIndices: number[];
+    amountPerWallet: number;
+    randomizeAmount: boolean;
+    minAmount: number;
+    maxAmount: number;
+    delayBetweenBuys: number; // ms
+  };
+}
 
 interface WalletInfo {
   name: string;
@@ -992,6 +1021,726 @@ class InteractiveCLI {
   }
 
   // ============================================
+  // TOKEN LAUNCH METHODS
+  // ============================================
+
+  private async tokenLaunchMenu(): Promise<void> {
+    while (true) {
+      this.clearScreen();
+      this.printMenu('Token Launch', [
+        'Create New Token (Full Setup)',
+        'Quick Launch (Minimal Input)',
+        'Buy Existing Token',
+        'Sell Token',
+        'Multi-Wallet Buy (Bundled)',
+        'View Recent Launches',
+      ]);
+
+      const choice = await this.prompt('Select option: ');
+
+      switch (choice) {
+        case '1':
+          await this.createTokenFull();
+          break;
+        case '2':
+          await this.quickLaunch();
+          break;
+        case '3':
+          await this.buyToken();
+          break;
+        case '4':
+          await this.sellToken();
+          break;
+        case '5':
+          await this.multiWalletBuy();
+          break;
+        case '6':
+          await this.viewRecentLaunches();
+          break;
+        case '0':
+          return;
+        default:
+          break;
+      }
+    }
+  }
+
+  private async createTokenFull(): Promise<void> {
+    this.clearScreen();
+    console.log('\n--- Create New Token (PumpFun) ---\n');
+
+    if (this.config.activeWalletIndex < 0) {
+      console.log('No active wallet set. Please set one first.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const wallet = this.config.wallets[this.config.activeWalletIndex];
+    console.log(`Using wallet: ${wallet.name}`);
+    console.log(`Address: ${wallet.publicKey}\n`);
+
+    // Check balance
+    try {
+      const balance = await this.connection.getBalance(new PublicKey(wallet.publicKey));
+      console.log(`Balance: ${(balance / LAMPORTS_PER_SOL).toFixed(4)} SOL\n`);
+      if (balance < 0.1 * LAMPORTS_PER_SOL) {
+        console.log('Warning: Low balance. Recommend at least 0.1 SOL.');
+      }
+    } catch (e) {
+      console.log('Could not check balance.');
+    }
+
+    // Token metadata input
+    console.log('--- Token Metadata ---\n');
+
+    const name = await this.prompt('Token Name: ');
+    if (!name) {
+      console.log('Name is required.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const symbol = await this.prompt('Token Symbol (e.g., PEPE): ');
+    if (!symbol) {
+      console.log('Symbol is required.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const description = await this.prompt('Description (optional): ') || `${symbol} - Created via CLI`;
+
+    console.log('\n--- Social Links (optional) ---\n');
+    const twitter = await this.prompt('Twitter URL: ');
+    const telegram = await this.prompt('Telegram URL: ');
+    const website = await this.prompt('Website URL: ');
+
+    console.log('\n--- Launch Settings ---\n');
+    const initialBuyStr = await this.prompt('Initial buy amount in SOL (default 0.1): ');
+    const initialBuySol = parseFloat(initialBuyStr) || 0.1;
+
+    const slippageStr = await this.prompt('Slippage % (default 10): ');
+    const slippage = parseFloat(slippageStr) || 10;
+
+    const priorityFeeStr = await this.prompt('Priority fee in SOL (default 0.0005): ');
+    const priorityFee = parseFloat(priorityFeeStr) || 0.0005;
+
+    // Auto-buy configuration
+    console.log('\n--- Auto-Buy Settings ---\n');
+    const enableAutoBuy = await this.prompt('Enable auto-buy from other wallets? (yes/no): ');
+
+    let autoBuyConfig = {
+      enabled: false,
+      walletIndices: [] as number[],
+      amountPerWallet: 0.05,
+      randomizeAmount: false,
+      minAmount: 0.01,
+      maxAmount: 0.1,
+      delayBetweenBuys: 1000,
+    };
+
+    if (enableAutoBuy.toLowerCase() === 'yes') {
+      autoBuyConfig.enabled = true;
+
+      // Show available wallets
+      const otherWallets = this.config.wallets.filter((_, i) => i !== this.config.activeWalletIndex);
+      if (otherWallets.length === 0) {
+        console.log('No other wallets available for auto-buy.');
+        autoBuyConfig.enabled = false;
+      } else {
+        console.log('\nAvailable wallets for auto-buy:');
+        otherWallets.forEach((w, i) => {
+          const realIndex = this.config.wallets.findIndex(ww => ww.publicKey === w.publicKey);
+          console.log(`  ${realIndex + 1}. ${w.name}`);
+        });
+
+        const walletsChoice = await this.prompt('\nSelect wallets (comma-separated, or "all"): ');
+        if (walletsChoice.toLowerCase() === 'all') {
+          autoBuyConfig.walletIndices = otherWallets.map(w =>
+            this.config.wallets.findIndex(ww => ww.publicKey === w.publicKey)
+          );
+        } else {
+          autoBuyConfig.walletIndices = walletsChoice
+            .split(',')
+            .map(s => parseInt(s.trim(), 10) - 1)
+            .filter(i => i >= 0 && i !== this.config.activeWalletIndex);
+        }
+
+        const randomize = await this.prompt('Randomize buy amounts? (yes/no): ');
+        autoBuyConfig.randomizeAmount = randomize.toLowerCase() === 'yes';
+
+        if (autoBuyConfig.randomizeAmount) {
+          const minStr = await this.prompt('Min SOL per wallet (default 0.01): ');
+          autoBuyConfig.minAmount = parseFloat(minStr) || 0.01;
+
+          const maxStr = await this.prompt('Max SOL per wallet (default 0.1): ');
+          autoBuyConfig.maxAmount = parseFloat(maxStr) || 0.1;
+        } else {
+          const amountStr = await this.prompt('SOL per wallet (default 0.05): ');
+          autoBuyConfig.amountPerWallet = parseFloat(amountStr) || 0.05;
+        }
+
+        const delayStr = await this.prompt('Delay between buys in seconds (default 1): ');
+        autoBuyConfig.delayBetweenBuys = (parseFloat(delayStr) || 1) * 1000;
+      }
+    }
+
+    // Review and confirm
+    this.clearScreen();
+    console.log('\n--- Launch Summary ---\n');
+    console.log(`Token Name:    ${name}`);
+    console.log(`Symbol:        ${symbol}`);
+    console.log(`Description:   ${description.substring(0, 50)}...`);
+    if (twitter) console.log(`Twitter:       ${twitter}`);
+    if (telegram) console.log(`Telegram:      ${telegram}`);
+    if (website) console.log(`Website:       ${website}`);
+    console.log(`\nInitial Buy:   ${initialBuySol} SOL`);
+    console.log(`Slippage:      ${slippage}%`);
+    console.log(`Priority Fee:  ${priorityFee} SOL`);
+    console.log(`\nLaunch Wallet: ${wallet.name}`);
+
+    if (autoBuyConfig.enabled) {
+      console.log(`\nAuto-Buy:      YES`);
+      console.log(`  Wallets:     ${autoBuyConfig.walletIndices.length}`);
+      if (autoBuyConfig.randomizeAmount) {
+        console.log(`  Amount:      ${autoBuyConfig.minAmount}-${autoBuyConfig.maxAmount} SOL (random)`);
+      } else {
+        console.log(`  Amount:      ${autoBuyConfig.amountPerWallet} SOL each`);
+      }
+      console.log(`  Delay:       ${autoBuyConfig.delayBetweenBuys / 1000}s between buys`);
+    }
+
+    const confirm = await this.prompt('\nLaunch token? (yes/no): ');
+    if (confirm.toLowerCase() !== 'yes') {
+      console.log('Cancelled.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    // Execute launch
+    console.log('\n--- Launching Token ---\n');
+
+    try {
+      // Generate mint keypair
+      const mintKeypair = Keypair.generate();
+      console.log(`Mint address: ${mintKeypair.publicKey.toBase58()}`);
+
+      // Upload metadata to IPFS
+      console.log('\nUploading metadata to IPFS...');
+      const metadataUri = await this.uploadTokenMetadata({
+        name,
+        symbol,
+        description,
+        twitter,
+        telegram,
+        website,
+      });
+      console.log(`Metadata URI: ${metadataUri}`);
+
+      // Create token
+      console.log('\nCreating token on PumpFun...');
+      const walletKeypair = Keypair.fromSecretKey(bs58.decode(wallet.privateKey));
+
+      const createResult = await this.createPumpFunToken(
+        walletKeypair,
+        mintKeypair,
+        { name, symbol, description },
+        metadataUri,
+        initialBuySol,
+        slippage,
+        priorityFee
+      );
+
+      console.log(`\n[SUCCESS] Token created!`);
+      console.log(`  Signature: ${createResult.signature}`);
+      console.log(`  Mint: ${mintKeypair.publicKey.toBase58()}`);
+      console.log(`  PumpFun: https://pump.fun/${mintKeypair.publicKey.toBase58()}`);
+      console.log(`  Solscan: https://solscan.io/tx/${createResult.signature}`);
+
+      // Execute auto-buys
+      if (autoBuyConfig.enabled && autoBuyConfig.walletIndices.length > 0) {
+        console.log('\n--- Executing Auto-Buys ---\n');
+
+        for (let i = 0; i < autoBuyConfig.walletIndices.length; i++) {
+          const walletIndex = autoBuyConfig.walletIndices[i];
+          const buyWallet = this.config.wallets[walletIndex];
+
+          // Calculate amount
+          let buyAmount = autoBuyConfig.amountPerWallet;
+          if (autoBuyConfig.randomizeAmount) {
+            buyAmount = autoBuyConfig.minAmount +
+              Math.random() * (autoBuyConfig.maxAmount - autoBuyConfig.minAmount);
+          }
+
+          // Delay between buys (skip first)
+          if (i > 0 && autoBuyConfig.delayBetweenBuys > 0) {
+            console.log(`  Waiting ${autoBuyConfig.delayBetweenBuys / 1000}s...`);
+            await new Promise(r => setTimeout(r, autoBuyConfig.delayBetweenBuys));
+          }
+
+          try {
+            const buyKeypair = Keypair.fromSecretKey(bs58.decode(buyWallet.privateKey));
+            const buyResult = await this.buyPumpFunToken(
+              buyKeypair,
+              mintKeypair.publicKey.toBase58(),
+              buyAmount,
+              slippage,
+              priorityFee
+            );
+            console.log(`  [OK] ${buyWallet.name}: ${buyAmount.toFixed(4)} SOL`);
+          } catch (error: any) {
+            console.log(`  [FAIL] ${buyWallet.name}: ${error.message}`);
+          }
+        }
+      }
+
+      console.log('\n--- Launch Complete ---');
+    } catch (error: any) {
+      console.log(`\n[ERROR] Launch failed: ${error.message}`);
+    }
+
+    await this.prompt('\nPress Enter to continue...');
+  }
+
+  private async quickLaunch(): Promise<void> {
+    this.clearScreen();
+    console.log('\n--- Quick Launch ---\n');
+
+    if (this.config.activeWalletIndex < 0) {
+      console.log('No active wallet set.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const wallet = this.config.wallets[this.config.activeWalletIndex];
+    console.log(`Wallet: ${wallet.name}\n`);
+
+    const name = await this.prompt('Token Name: ');
+    const symbol = await this.prompt('Symbol: ');
+
+    if (!name || !symbol) {
+      console.log('Name and symbol are required.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const buyStr = await this.prompt('Initial buy SOL (default 0.05): ');
+    const buySol = parseFloat(buyStr) || 0.05;
+
+    const confirm = await this.prompt(`\nLaunch ${symbol} with ${buySol} SOL buy? (yes/no): `);
+    if (confirm.toLowerCase() !== 'yes') {
+      console.log('Cancelled.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    try {
+      const mintKeypair = Keypair.generate();
+      const walletKeypair = Keypair.fromSecretKey(bs58.decode(wallet.privateKey));
+
+      console.log('\nUploading metadata...');
+      const metadataUri = await this.uploadTokenMetadata({
+        name,
+        symbol,
+        description: `${symbol} token`,
+      });
+
+      console.log('Creating token...');
+      const result = await this.createPumpFunToken(
+        walletKeypair,
+        mintKeypair,
+        { name, symbol, description: `${symbol} token` },
+        metadataUri,
+        buySol,
+        10,
+        0.0005
+      );
+
+      console.log(`\n[SUCCESS] Token launched!`);
+      console.log(`  Mint: ${mintKeypair.publicKey.toBase58()}`);
+      console.log(`  PumpFun: https://pump.fun/${mintKeypair.publicKey.toBase58()}`);
+    } catch (error: any) {
+      console.log(`\n[ERROR] ${error.message}`);
+    }
+
+    await this.prompt('\nPress Enter to continue...');
+  }
+
+  private async buyToken(): Promise<void> {
+    this.clearScreen();
+    console.log('\n--- Buy Token ---\n');
+
+    if (this.config.activeWalletIndex < 0) {
+      console.log('No active wallet set.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const wallet = this.config.wallets[this.config.activeWalletIndex];
+    console.log(`Wallet: ${wallet.name}\n`);
+
+    const mintAddress = await this.prompt('Token mint address: ');
+    if (!mintAddress) {
+      console.log('Mint address required.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const amountStr = await this.prompt('Amount in SOL: ');
+    const amount = parseFloat(amountStr);
+    if (isNaN(amount) || amount <= 0) {
+      console.log('Invalid amount.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const confirm = await this.prompt(`\nBuy ${amount} SOL worth? (yes/no): `);
+    if (confirm.toLowerCase() !== 'yes') {
+      console.log('Cancelled.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    try {
+      const walletKeypair = Keypair.fromSecretKey(bs58.decode(wallet.privateKey));
+      const result = await this.buyPumpFunToken(walletKeypair, mintAddress, amount, 10, 0.0005);
+      console.log(`\n[SUCCESS] Buy executed!`);
+      console.log(`  Signature: ${result.signature}`);
+    } catch (error: any) {
+      console.log(`\n[ERROR] ${error.message}`);
+    }
+
+    await this.prompt('\nPress Enter to continue...');
+  }
+
+  private async sellToken(): Promise<void> {
+    this.clearScreen();
+    console.log('\n--- Sell Token ---\n');
+
+    if (this.config.activeWalletIndex < 0) {
+      console.log('No active wallet set.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const wallet = this.config.wallets[this.config.activeWalletIndex];
+    console.log(`Wallet: ${wallet.name}\n`);
+
+    const mintAddress = await this.prompt('Token mint address: ');
+    if (!mintAddress) {
+      console.log('Mint address required.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const amountStr = await this.prompt('Token amount to sell (or "all"): ');
+
+    let amount: number;
+    if (amountStr.toLowerCase() === 'all') {
+      // TODO: Get token balance
+      console.log('Selling all tokens...');
+      amount = 1000000000; // Large number for all
+    } else {
+      amount = parseFloat(amountStr);
+      if (isNaN(amount) || amount <= 0) {
+        console.log('Invalid amount.');
+        await this.prompt('Press Enter to continue...');
+        return;
+      }
+    }
+
+    const confirm = await this.prompt(`\nSell tokens? (yes/no): `);
+    if (confirm.toLowerCase() !== 'yes') {
+      console.log('Cancelled.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    try {
+      const walletKeypair = Keypair.fromSecretKey(bs58.decode(wallet.privateKey));
+      const result = await this.sellPumpFunToken(walletKeypair, mintAddress, amount, 10, 0.0005);
+      console.log(`\n[SUCCESS] Sell executed!`);
+      console.log(`  Signature: ${result.signature}`);
+    } catch (error: any) {
+      console.log(`\n[ERROR] ${error.message}`);
+    }
+
+    await this.prompt('\nPress Enter to continue...');
+  }
+
+  private async multiWalletBuy(): Promise<void> {
+    this.clearScreen();
+    console.log('\n--- Multi-Wallet Buy ---\n');
+
+    if (this.config.wallets.length < 2) {
+      console.log('Need at least 2 wallets.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const mintAddress = await this.prompt('Token mint address: ');
+    if (!mintAddress) {
+      console.log('Mint address required.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    console.log('\nSelect wallets to buy with:');
+    this.config.wallets.forEach((w, i) => {
+      console.log(`  ${i + 1}. ${w.name}`);
+    });
+
+    const walletsChoice = await this.prompt('\nWallets (comma-separated, or "all"): ');
+    let walletIndices: number[];
+
+    if (walletsChoice.toLowerCase() === 'all') {
+      walletIndices = this.config.wallets.map((_, i) => i);
+    } else {
+      walletIndices = walletsChoice
+        .split(',')
+        .map(s => parseInt(s.trim(), 10) - 1)
+        .filter(i => i >= 0 && i < this.config.wallets.length);
+    }
+
+    if (walletIndices.length === 0) {
+      console.log('No valid wallets selected.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const randomize = await this.prompt('Randomize amounts? (yes/no): ');
+    let amounts: number[] = [];
+
+    if (randomize.toLowerCase() === 'yes') {
+      const minStr = await this.prompt('Min SOL: ');
+      const maxStr = await this.prompt('Max SOL: ');
+      const min = parseFloat(minStr) || 0.01;
+      const max = parseFloat(maxStr) || 0.1;
+
+      amounts = walletIndices.map(() => min + Math.random() * (max - min));
+    } else {
+      const amountStr = await this.prompt('SOL per wallet: ');
+      const amount = parseFloat(amountStr) || 0.05;
+      amounts = walletIndices.map(() => amount);
+    }
+
+    const delayStr = await this.prompt('Delay between buys (seconds, 0 for no delay): ');
+    const delay = (parseFloat(delayStr) || 0) * 1000;
+
+    // Summary
+    console.log('\n--- Buy Summary ---\n');
+    walletIndices.forEach((i, idx) => {
+      console.log(`  ${this.config.wallets[i].name}: ${amounts[idx].toFixed(4)} SOL`);
+    });
+    console.log(`\n  Total: ${amounts.reduce((a, b) => a + b, 0).toFixed(4)} SOL`);
+
+    const confirm = await this.prompt('\nExecute? (yes/no): ');
+    if (confirm.toLowerCase() !== 'yes') {
+      console.log('Cancelled.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    console.log('\nExecuting buys...\n');
+
+    for (let i = 0; i < walletIndices.length; i++) {
+      const walletIndex = walletIndices[i];
+      const wallet = this.config.wallets[walletIndex];
+      const amount = amounts[i];
+
+      if (i > 0 && delay > 0) {
+        console.log(`  Waiting ${delay / 1000}s...`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+
+      try {
+        const keypair = Keypair.fromSecretKey(bs58.decode(wallet.privateKey));
+        const result = await this.buyPumpFunToken(keypair, mintAddress, amount, 10, 0.0005);
+        console.log(`  [OK] ${wallet.name}: ${amount.toFixed(4)} SOL`);
+      } catch (error: any) {
+        console.log(`  [FAIL] ${wallet.name}: ${error.message}`);
+      }
+    }
+
+    console.log('\nMulti-buy complete!');
+    await this.prompt('\nPress Enter to continue...');
+  }
+
+  private async viewRecentLaunches(): Promise<void> {
+    this.clearScreen();
+    console.log('\n--- Recent Launches ---\n');
+    console.log('(This feature tracks locally launched tokens)\n');
+    console.log('No recent launches recorded.');
+    await this.prompt('\nPress Enter to continue...');
+  }
+
+  // ============================================
+  // PUMPFUN API HELPERS
+  // ============================================
+
+  private async uploadTokenMetadata(metadata: TokenMetadata): Promise<string> {
+    const formData = new URLSearchParams();
+    formData.append('name', metadata.name);
+    formData.append('symbol', metadata.symbol);
+    formData.append('description', metadata.description);
+    formData.append('showName', 'true');
+
+    if (metadata.twitter) formData.append('twitter', metadata.twitter);
+    if (metadata.telegram) formData.append('telegram', metadata.telegram);
+    if (metadata.website) formData.append('website', metadata.website);
+
+    const response = await fetch(`${PUMPPORTAL_API_URL}/ipfs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formData.toString(),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Metadata upload failed: ${response.status} - ${errorText}`);
+    }
+
+    const result = await response.json() as { metadataUri: string };
+    return result.metadataUri;
+  }
+
+  private async createPumpFunToken(
+    walletKeypair: Keypair,
+    mintKeypair: Keypair,
+    metadata: { name: string; symbol: string; description: string },
+    metadataUri: string,
+    initialBuySol: number,
+    slippage: number,
+    priorityFee: number
+  ): Promise<{ signature: string }> {
+    const response = await fetch(`${PUMPPORTAL_API_URL}/trade-local`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        publicKey: walletKeypair.publicKey.toBase58(),
+        action: 'create',
+        tokenMetadata: {
+          name: metadata.name,
+          symbol: metadata.symbol,
+          uri: metadataUri,
+        },
+        mint: mintKeypair.publicKey.toBase58(),
+        denominatedInSol: 'true',
+        amount: initialBuySol,
+        slippage,
+        priorityFee,
+        pool: 'pump',
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`PumpPortal API error: ${response.status} - ${errorText}`);
+    }
+
+    const transactionData = await response.arrayBuffer();
+    const { VersionedTransaction } = await import('@solana/web3.js');
+    const transaction = VersionedTransaction.deserialize(new Uint8Array(transactionData));
+
+    transaction.sign([walletKeypair, mintKeypair]);
+
+    const signature = await this.connection.sendTransaction(transaction, {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+      maxRetries: 3,
+    });
+
+    await this.connection.confirmTransaction(signature, 'confirmed');
+
+    return { signature };
+  }
+
+  private async buyPumpFunToken(
+    walletKeypair: Keypair,
+    mintAddress: string,
+    solAmount: number,
+    slippage: number,
+    priorityFee: number
+  ): Promise<{ signature: string }> {
+    const response = await fetch(`${PUMPPORTAL_API_URL}/trade-local`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        publicKey: walletKeypair.publicKey.toBase58(),
+        action: 'buy',
+        mint: mintAddress,
+        denominatedInSol: 'true',
+        amount: solAmount,
+        slippage,
+        priorityFee,
+        pool: 'pump',
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`PumpPortal API error: ${response.status} - ${errorText}`);
+    }
+
+    const transactionData = await response.arrayBuffer();
+    const { VersionedTransaction } = await import('@solana/web3.js');
+    const transaction = VersionedTransaction.deserialize(new Uint8Array(transactionData));
+
+    transaction.sign([walletKeypair]);
+
+    const signature = await this.connection.sendTransaction(transaction, {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+    });
+
+    await this.connection.confirmTransaction(signature, 'confirmed');
+
+    return { signature };
+  }
+
+  private async sellPumpFunToken(
+    walletKeypair: Keypair,
+    mintAddress: string,
+    tokenAmount: number,
+    slippage: number,
+    priorityFee: number
+  ): Promise<{ signature: string }> {
+    const response = await fetch(`${PUMPPORTAL_API_URL}/trade-local`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        publicKey: walletKeypair.publicKey.toBase58(),
+        action: 'sell',
+        mint: mintAddress,
+        denominatedInSol: 'false',
+        amount: tokenAmount,
+        slippage,
+        priorityFee,
+        pool: 'pump',
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`PumpPortal API error: ${response.status} - ${errorText}`);
+    }
+
+    const transactionData = await response.arrayBuffer();
+    const { VersionedTransaction } = await import('@solana/web3.js');
+    const transaction = VersionedTransaction.deserialize(new Uint8Array(transactionData));
+
+    transaction.sign([walletKeypair]);
+
+    const signature = await this.connection.sendTransaction(transaction, {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+    });
+
+    await this.connection.confirmTransaction(signature, 'confirmed');
+
+    return { signature };
+  }
+
+  // ============================================
   // MAIN MENU
   // ============================================
 
@@ -1009,6 +1758,7 @@ class InteractiveCLI {
 
       this.printMenu('Main Menu', [
         'Wallet Management',
+        'Token Launch (PumpFun)',
         'Bundler Configuration',
         'Quick Balance Check',
         'Settings',
@@ -1022,15 +1772,18 @@ class InteractiveCLI {
           await this.walletMenu();
           break;
         case '2':
-          await this.configureBundler();
+          await this.tokenLaunchMenu();
           break;
         case '3':
-          await this.quickCheckBalance();
+          await this.configureBundler();
           break;
         case '4':
-          await this.settingsMenu();
+          await this.quickCheckBalance();
           break;
         case '5':
+          await this.settingsMenu();
+          break;
+        case '6':
           console.log('\nStarting bot service...');
           console.log('(This would start the main index.ts service)');
           await this.prompt('Press Enter to continue...');
