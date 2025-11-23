@@ -29,3 +29,10 @@ coverage/
 # Temporary files
 tmp/
 temp/
+
+# Uploads
+uploads/
+
+# Frontend build
+web/dist/
+web/node_modules/

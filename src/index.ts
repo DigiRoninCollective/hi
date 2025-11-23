@@ -6,6 +6,7 @@ import { TweetClassifier } from './classifier';
 import { AlertingService } from './alerting';
 import { eventBus, EventType } from './events';
 import { ParsedLaunchCommand, TweetData } from './types';
+import { createApiRoutes } from './api-routes';
 
 // Track launched tokens to avoid duplicates
 const launchedTokens = new Set<string>();
@@ -45,6 +46,8 @@ async function main() {
   sseServer.setClassifier(classifier);
   console.log('  [x] SSE server initialized');
 
+  // Note: We'll set the API routes after PumpPortal is initialized
+
   // 4. PumpPortal service - for token creation
   console.log('\nInitializing PumpPortal service...');
   const pumpPortal = new PumpPortalService(
@@ -76,6 +79,12 @@ async function main() {
     console.error('Make sure your Solana RPC URL is correct and accessible.');
     process.exit(1);
   }
+
+  // Set up API routes with PumpPortal
+  const apiRouter = createApiRoutes(pumpPortal, eventBus);
+  sseServer.setApiRouter(apiRouter);
+  sseServer.setPumpPortal(pumpPortal);
+  console.log('  [x] API routes initialized');
 
   // 5. Twitter stream service
   console.log('\nInitializing Twitter stream service...');
