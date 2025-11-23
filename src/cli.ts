@@ -65,6 +65,64 @@ interface CLIConfig {
 }
 
 // ============================================
+// AUTO-SELL & TRADING TYPES
+// ============================================
+
+interface AutoSellConfig {
+  id: string;
+  tokenMint: string;
+  tokenSymbol: string;
+  walletIndex: number;
+  enabled: boolean;
+  takeProfitPercent: number | null;     // e.g., 100 = sell at 2x
+  stopLossPercent: number | null;       // e.g., -50 = sell at 50% loss
+  trailingStopPercent: number | null;   // e.g., 20 = 20% below highest
+  sellPercent: number;                   // How much to sell (100 = all)
+  entryPriceSol: number;
+  highestPriceSol: number;              // For trailing stop
+  createdAt: string;
+}
+
+interface Position {
+  tokenMint: string;
+  tokenSymbol: string;
+  walletIndex: number;
+  walletName: string;
+  tokenBalance: number;
+  avgEntryPrice: number;
+  currentPrice: number;
+  totalInvested: number;
+  currentValue: number;
+  pnlSol: number;
+  pnlPercent: number;
+  lastUpdated: string;
+}
+
+interface VolumeConfig {
+  id: string;
+  tokenMint: string;
+  tokenSymbol: string;
+  enabled: boolean;
+  walletIndices: number[];
+  minBuySol: number;
+  maxBuySol: number;
+  minDelayMs: number;
+  maxDelayMs: number;
+  cycleCount: number;          // How many buy/sell cycles
+  completedCycles: number;
+  sellDelayMs: number;         // Delay before selling after buy
+  randomizeOrder: boolean;     // Randomize wallet order
+  createdAt: string;
+}
+
+interface TradingConfig {
+  autoSells: AutoSellConfig[];
+  positions: Position[];
+  volumeTasks: VolumeConfig[];
+  priceCheckIntervalMs: number;
+}
+
+// ============================================
 // CLI CLASS
 // ============================================
 
@@ -72,7 +130,11 @@ class InteractiveCLI {
   private rl: readline.Interface;
   private config: CLIConfig;
   private configPath: string;
+  private tradingConfig: TradingConfig;
+  private tradingConfigPath: string;
   private connection: Connection;
+  private priceMonitorInterval: NodeJS.Timeout | null = null;
+  private volumeTaskIntervals: Map<string, NodeJS.Timeout> = new Map();
 
   constructor() {
     this.rl = readline.createInterface({
@@ -80,7 +142,9 @@ class InteractiveCLI {
       output: process.stdout,
     });
     this.configPath = path.join(process.cwd(), '.cli-config.json');
+    this.tradingConfigPath = path.join(process.cwd(), '.trading-config.json');
     this.config = this.loadConfig();
+    this.tradingConfig = this.loadTradingConfig();
     this.connection = new Connection(this.config.rpcUrl, 'confirmed');
   }
 
@@ -134,6 +198,33 @@ class InteractiveCLI {
       wallets: this.config.wallets.map(w => w.isMain ? { ...w, privateKey: '[FROM_ENV]' } : w),
     };
     fs.writeFileSync(this.configPath, JSON.stringify(configToSave, null, 2));
+  }
+
+  private loadTradingConfig(): TradingConfig {
+    const defaultConfig: TradingConfig = {
+      autoSells: [],
+      positions: [],
+      volumeTasks: [],
+      priceCheckIntervalMs: 5000, // 5 seconds
+    };
+
+    if (fs.existsSync(this.tradingConfigPath)) {
+      try {
+        const saved = JSON.parse(fs.readFileSync(this.tradingConfigPath, 'utf-8'));
+        return { ...defaultConfig, ...saved };
+      } catch (e) {
+        return defaultConfig;
+      }
+    }
+    return defaultConfig;
+  }
+
+  private saveTradingConfig(): void {
+    fs.writeFileSync(this.tradingConfigPath, JSON.stringify(this.tradingConfig, null, 2));
+  }
+
+  private generateId(): string {
+    return Math.random().toString(36).substring(2, 15);
   }
 
   private prompt(question: string): Promise<string> {
@@ -1741,6 +1832,774 @@ class InteractiveCLI {
   }
 
   // ============================================
+  // TRADING MENU (Auto-Sell, Positions, Volume)
+  // ============================================
+
+  private async tradingMenu(): Promise<void> {
+    while (true) {
+      this.clearScreen();
+
+      const activeAutoSells = this.tradingConfig.autoSells.filter(a => a.enabled).length;
+      const activeVolumeTasks = this.tradingConfig.volumeTasks.filter(v => v.enabled).length;
+
+      console.log(`\n  Auto-Sells Active: ${activeAutoSells}`);
+      console.log(`  Volume Tasks Active: ${activeVolumeTasks}`);
+      console.log(`  Price Monitor: ${this.priceMonitorInterval ? 'RUNNING' : 'STOPPED'}`);
+
+      this.printMenu('Trading & Automation', [
+        'Auto-Sell Setup (TP/SL/Trailing)',
+        'View Active Auto-Sells',
+        'Position Tracker',
+        'Volume Generation',
+        'View Active Volume Tasks',
+        'Start/Stop Price Monitor',
+        'Sell All Positions',
+      ]);
+
+      const choice = await this.prompt('Select option: ');
+
+      switch (choice) {
+        case '1':
+          await this.setupAutoSell();
+          break;
+        case '2':
+          await this.viewAutoSells();
+          break;
+        case '3':
+          await this.positionTracker();
+          break;
+        case '4':
+          await this.setupVolumeGeneration();
+          break;
+        case '5':
+          await this.viewVolumeTasks();
+          break;
+        case '6':
+          await this.togglePriceMonitor();
+          break;
+        case '7':
+          await this.sellAllPositions();
+          break;
+        case '0':
+          return;
+        default:
+          break;
+      }
+    }
+  }
+
+  // ============================================
+  // AUTO-SELL METHODS
+  // ============================================
+
+  private async setupAutoSell(): Promise<void> {
+    this.clearScreen();
+    console.log('\n--- Setup Auto-Sell ---\n');
+
+    if (this.config.wallets.length === 0) {
+      console.log('No wallets configured.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    // Get token mint
+    const tokenMint = await this.prompt('Token Mint Address: ');
+    if (!tokenMint) {
+      console.log('Token mint is required.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const tokenSymbol = await this.prompt('Token Symbol (for display): ') || 'UNKNOWN';
+
+    // Select wallet
+    console.log('\nAvailable wallets:');
+    this.config.wallets.forEach((w, i) => {
+      console.log(`  ${i + 1}. ${w.name} - ${w.publicKey.substring(0, 8)}...`);
+    });
+
+    const walletChoice = await this.prompt('\nSelect wallet (number): ');
+    const walletIndex = parseInt(walletChoice, 10) - 1;
+
+    if (walletIndex < 0 || walletIndex >= this.config.wallets.length) {
+      console.log('Invalid wallet selection.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    // Get entry price
+    const entryPriceStr = await this.prompt('Entry price in SOL (per token): ');
+    const entryPrice = parseFloat(entryPriceStr);
+    if (isNaN(entryPrice) || entryPrice <= 0) {
+      console.log('Invalid entry price.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    console.log('\n--- Exit Conditions (leave blank to skip) ---\n');
+
+    // Take profit
+    const tpStr = await this.prompt('Take Profit % (e.g., 100 for 2x): ');
+    const takeProfit = tpStr ? parseFloat(tpStr) : null;
+
+    // Stop loss
+    const slStr = await this.prompt('Stop Loss % (e.g., 50 for -50%): ');
+    const stopLoss = slStr ? -Math.abs(parseFloat(slStr)) : null;
+
+    // Trailing stop
+    const tsStr = await this.prompt('Trailing Stop % (e.g., 20 for 20% from high): ');
+    const trailingStop = tsStr ? parseFloat(tsStr) : null;
+
+    // Sell percentage
+    const sellPercentStr = await this.prompt('Sell % when triggered (default 100): ');
+    const sellPercent = parseFloat(sellPercentStr) || 100;
+
+    if (!takeProfit && !stopLoss && !trailingStop) {
+      console.log('\nAt least one exit condition is required.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    // Create auto-sell config
+    const autoSell: AutoSellConfig = {
+      id: this.generateId(),
+      tokenMint,
+      tokenSymbol,
+      walletIndex,
+      enabled: true,
+      takeProfitPercent: takeProfit,
+      stopLossPercent: stopLoss,
+      trailingStopPercent: trailingStop,
+      sellPercent,
+      entryPriceSol: entryPrice,
+      highestPriceSol: entryPrice,
+      createdAt: new Date().toISOString(),
+    };
+
+    this.tradingConfig.autoSells.push(autoSell);
+    this.saveTradingConfig();
+
+    // Show summary
+    this.clearScreen();
+    console.log('\n--- Auto-Sell Created ---\n');
+    console.log(`Token: ${tokenSymbol} (${tokenMint.substring(0, 8)}...)`);
+    console.log(`Wallet: ${this.config.wallets[walletIndex].name}`);
+    console.log(`Entry Price: ${entryPrice} SOL`);
+    if (takeProfit) console.log(`Take Profit: +${takeProfit}% (at ${entryPrice * (1 + takeProfit / 100)} SOL)`);
+    if (stopLoss) console.log(`Stop Loss: ${stopLoss}% (at ${entryPrice * (1 + stopLoss / 100)} SOL)`);
+    if (trailingStop) console.log(`Trailing Stop: ${trailingStop}% from highest`);
+    console.log(`Sell Amount: ${sellPercent}% of holdings`);
+
+    if (!this.priceMonitorInterval) {
+      const startMonitor = await this.prompt('\nStart price monitor now? (yes/no): ');
+      if (startMonitor.toLowerCase() === 'yes') {
+        this.startPriceMonitor();
+        console.log('Price monitor started.');
+      }
+    }
+
+    await this.prompt('\nPress Enter to continue...');
+  }
+
+  private async viewAutoSells(): Promise<void> {
+    this.clearScreen();
+    console.log('\n--- Active Auto-Sells ---\n');
+
+    if (this.tradingConfig.autoSells.length === 0) {
+      console.log('No auto-sells configured.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    this.tradingConfig.autoSells.forEach((as, i) => {
+      const wallet = this.config.wallets[as.walletIndex];
+      console.log(`${i + 1}. [${as.enabled ? 'ON' : 'OFF'}] ${as.tokenSymbol}`);
+      console.log(`   Mint: ${as.tokenMint.substring(0, 16)}...`);
+      console.log(`   Wallet: ${wallet?.name || 'Unknown'}`);
+      console.log(`   Entry: ${as.entryPriceSol} SOL | High: ${as.highestPriceSol} SOL`);
+      if (as.takeProfitPercent) console.log(`   TP: +${as.takeProfitPercent}%`);
+      if (as.stopLossPercent) console.log(`   SL: ${as.stopLossPercent}%`);
+      if (as.trailingStopPercent) console.log(`   Trailing: ${as.trailingStopPercent}%`);
+      console.log('');
+    });
+
+    console.log('\nOptions: [T]oggle, [D]elete, [B]ack');
+    const action = await this.prompt('Select action: ');
+
+    if (action.toLowerCase() === 't') {
+      const indexStr = await this.prompt('Toggle which # : ');
+      const index = parseInt(indexStr, 10) - 1;
+      if (index >= 0 && index < this.tradingConfig.autoSells.length) {
+        this.tradingConfig.autoSells[index].enabled = !this.tradingConfig.autoSells[index].enabled;
+        this.saveTradingConfig();
+        console.log(`Auto-sell ${this.tradingConfig.autoSells[index].enabled ? 'enabled' : 'disabled'}.`);
+        await this.prompt('Press Enter to continue...');
+      }
+    } else if (action.toLowerCase() === 'd') {
+      const indexStr = await this.prompt('Delete which # : ');
+      const index = parseInt(indexStr, 10) - 1;
+      if (index >= 0 && index < this.tradingConfig.autoSells.length) {
+        const removed = this.tradingConfig.autoSells.splice(index, 1)[0];
+        this.saveTradingConfig();
+        console.log(`Removed auto-sell for ${removed.tokenSymbol}.`);
+        await this.prompt('Press Enter to continue...');
+      }
+    }
+  }
+
+  // ============================================
+  // POSITION TRACKER
+  // ============================================
+
+  private async positionTracker(): Promise<void> {
+    this.clearScreen();
+    console.log('\n--- Position Tracker ---\n');
+    console.log('Fetching positions from all wallets...\n');
+
+    const positions: Position[] = [];
+
+    for (let i = 0; i < this.config.wallets.length; i++) {
+      const wallet = this.config.wallets[i];
+      try {
+        // Get token accounts for wallet
+        const pubkey = new PublicKey(wallet.publicKey);
+        const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(pubkey, {
+          programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
+        });
+
+        for (const account of tokenAccounts.value) {
+          const parsed = account.account.data.parsed.info;
+          const tokenBalance = parsed.tokenAmount.uiAmount;
+
+          if (tokenBalance > 0) {
+            const mint = parsed.mint;
+
+            // Get price from PumpPortal (simplified)
+            let currentPrice = 0;
+            try {
+              const priceResp = await fetch(`${PUMPPORTAL_API_URL}/token/${mint}`);
+              if (priceResp.ok) {
+                const priceData = await priceResp.json();
+                currentPrice = priceData.price_sol || 0;
+              }
+            } catch (e) {
+              // Price fetch failed, skip
+            }
+
+            // Find if we have entry data
+            const existingPos = this.tradingConfig.positions.find(
+              p => p.tokenMint === mint && p.walletIndex === i
+            );
+
+            const avgEntry = existingPos?.avgEntryPrice || currentPrice;
+            const totalInvested = existingPos?.totalInvested || (tokenBalance * avgEntry);
+            const currentValue = tokenBalance * currentPrice;
+            const pnlSol = currentValue - totalInvested;
+            const pnlPercent = totalInvested > 0 ? ((currentValue / totalInvested) - 1) * 100 : 0;
+
+            positions.push({
+              tokenMint: mint,
+              tokenSymbol: existingPos?.tokenSymbol || mint.substring(0, 6),
+              walletIndex: i,
+              walletName: wallet.name,
+              tokenBalance,
+              avgEntryPrice: avgEntry,
+              currentPrice,
+              totalInvested,
+              currentValue,
+              pnlSol,
+              pnlPercent,
+              lastUpdated: new Date().toISOString(),
+            });
+          }
+        }
+      } catch (error: any) {
+        console.log(`Error fetching ${wallet.name}: ${error.message}`);
+      }
+    }
+
+    // Update stored positions
+    this.tradingConfig.positions = positions;
+    this.saveTradingConfig();
+
+    // Display positions
+    if (positions.length === 0) {
+      console.log('No token positions found.');
+    } else {
+      let totalValue = 0;
+      let totalPnl = 0;
+
+      console.log('Token          Wallet         Balance       Price      Value      P&L');
+      console.log('-'.repeat(75));
+
+      for (const pos of positions) {
+        const pnlColor = pos.pnlPercent >= 0 ? '+' : '';
+        console.log(
+          `${pos.tokenSymbol.padEnd(14)} ${pos.walletName.substring(0, 12).padEnd(14)} ` +
+          `${pos.tokenBalance.toFixed(2).padStart(10)} ` +
+          `${pos.currentPrice.toFixed(6).padStart(10)} ` +
+          `${pos.currentValue.toFixed(4).padStart(10)} ` +
+          `${pnlColor}${pos.pnlPercent.toFixed(1)}%`
+        );
+        totalValue += pos.currentValue;
+        totalPnl += pos.pnlSol;
+      }
+
+      console.log('-'.repeat(75));
+      console.log(`Total Value: ${totalValue.toFixed(4)} SOL | Total P&L: ${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(4)} SOL`);
+    }
+
+    console.log('\n[R]efresh, [S]et Entry Price, [B]ack');
+    const action = await this.prompt('Select action: ');
+
+    if (action.toLowerCase() === 'r') {
+      await this.positionTracker();
+    } else if (action.toLowerCase() === 's') {
+      const mint = await this.prompt('Token mint to set entry for: ');
+      const entry = await this.prompt('Entry price in SOL: ');
+      const pos = this.tradingConfig.positions.find(p => p.tokenMint.startsWith(mint));
+      if (pos) {
+        pos.avgEntryPrice = parseFloat(entry);
+        pos.totalInvested = pos.tokenBalance * pos.avgEntryPrice;
+        this.saveTradingConfig();
+        console.log('Entry price updated.');
+      }
+      await this.prompt('Press Enter to continue...');
+    }
+  }
+
+  // ============================================
+  // VOLUME GENERATION
+  // ============================================
+
+  private async setupVolumeGeneration(): Promise<void> {
+    this.clearScreen();
+    console.log('\n--- Volume Generation Setup ---\n');
+    console.log('This will create coordinated buy/sell cycles to generate volume.\n');
+
+    if (this.config.wallets.length < 2) {
+      console.log('Need at least 2 wallets for volume generation.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    // Get token
+    const tokenMint = await this.prompt('Token Mint Address: ');
+    if (!tokenMint) return;
+
+    const tokenSymbol = await this.prompt('Token Symbol: ') || 'UNKNOWN';
+
+    // Select wallets
+    console.log('\nAvailable wallets:');
+    this.config.wallets.forEach((w, i) => {
+      console.log(`  ${i + 1}. ${w.name}`);
+    });
+
+    const walletsChoice = await this.prompt('\nSelect wallets (comma-separated or "all"): ');
+    let walletIndices: number[];
+
+    if (walletsChoice.toLowerCase() === 'all') {
+      walletIndices = this.config.wallets.map((_, i) => i);
+    } else {
+      walletIndices = walletsChoice.split(',').map(s => parseInt(s.trim(), 10) - 1).filter(i => i >= 0);
+    }
+
+    if (walletIndices.length < 2) {
+      console.log('Need at least 2 wallets selected.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    // Volume settings
+    console.log('\n--- Volume Settings ---\n');
+
+    const minBuyStr = await this.prompt('Min buy amount in SOL (default 0.01): ');
+    const minBuySol = parseFloat(minBuyStr) || 0.01;
+
+    const maxBuyStr = await this.prompt('Max buy amount in SOL (default 0.05): ');
+    const maxBuySol = parseFloat(maxBuyStr) || 0.05;
+
+    const minDelayStr = await this.prompt('Min delay between trades in seconds (default 30): ');
+    const minDelayMs = (parseFloat(minDelayStr) || 30) * 1000;
+
+    const maxDelayStr = await this.prompt('Max delay between trades in seconds (default 120): ');
+    const maxDelayMs = (parseFloat(maxDelayStr) || 120) * 1000;
+
+    const sellDelayStr = await this.prompt('Delay before sell after buy in seconds (default 60): ');
+    const sellDelayMs = (parseFloat(sellDelayStr) || 60) * 1000;
+
+    const cycleCountStr = await this.prompt('Number of buy/sell cycles (default 10): ');
+    const cycleCount = parseInt(cycleCountStr, 10) || 10;
+
+    const randomize = await this.prompt('Randomize wallet order? (yes/no, default yes): ');
+    const randomizeOrder = randomize.toLowerCase() !== 'no';
+
+    // Create volume config
+    const volumeConfig: VolumeConfig = {
+      id: this.generateId(),
+      tokenMint,
+      tokenSymbol,
+      enabled: false, // Start disabled
+      walletIndices,
+      minBuySol,
+      maxBuySol,
+      minDelayMs,
+      maxDelayMs,
+      cycleCount,
+      completedCycles: 0,
+      sellDelayMs,
+      randomizeOrder,
+      createdAt: new Date().toISOString(),
+    };
+
+    this.tradingConfig.volumeTasks.push(volumeConfig);
+    this.saveTradingConfig();
+
+    // Summary
+    console.log('\n--- Volume Task Created ---\n');
+    console.log(`Token: ${tokenSymbol}`);
+    console.log(`Wallets: ${walletIndices.length}`);
+    console.log(`Buy Range: ${minBuySol} - ${maxBuySol} SOL`);
+    console.log(`Delay Range: ${minDelayMs / 1000}s - ${maxDelayMs / 1000}s`);
+    console.log(`Cycles: ${cycleCount}`);
+    console.log(`Status: PAUSED (use View Volume Tasks to start)`);
+
+    await this.prompt('\nPress Enter to continue...');
+  }
+
+  private async viewVolumeTasks(): Promise<void> {
+    this.clearScreen();
+    console.log('\n--- Volume Generation Tasks ---\n');
+
+    if (this.tradingConfig.volumeTasks.length === 0) {
+      console.log('No volume tasks configured.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    this.tradingConfig.volumeTasks.forEach((vt, i) => {
+      const isRunning = this.volumeTaskIntervals.has(vt.id);
+      console.log(`${i + 1}. [${isRunning ? 'RUNNING' : vt.enabled ? 'ENABLED' : 'PAUSED'}] ${vt.tokenSymbol}`);
+      console.log(`   Mint: ${vt.tokenMint.substring(0, 16)}...`);
+      console.log(`   Wallets: ${vt.walletIndices.length} | Cycles: ${vt.completedCycles}/${vt.cycleCount}`);
+      console.log(`   Buy: ${vt.minBuySol}-${vt.maxBuySol} SOL | Delay: ${vt.minDelayMs / 1000}s-${vt.maxDelayMs / 1000}s`);
+      console.log('');
+    });
+
+    console.log('\nOptions: [S]tart, [P]ause, [D]elete, [B]ack');
+    const action = await this.prompt('Select action: ');
+
+    if (action.toLowerCase() === 's') {
+      const indexStr = await this.prompt('Start which # : ');
+      const index = parseInt(indexStr, 10) - 1;
+      if (index >= 0 && index < this.tradingConfig.volumeTasks.length) {
+        await this.startVolumeTask(this.tradingConfig.volumeTasks[index]);
+        console.log('Volume task started.');
+        await this.prompt('Press Enter to continue...');
+      }
+    } else if (action.toLowerCase() === 'p') {
+      const indexStr = await this.prompt('Pause which # : ');
+      const index = parseInt(indexStr, 10) - 1;
+      if (index >= 0 && index < this.tradingConfig.volumeTasks.length) {
+        this.stopVolumeTask(this.tradingConfig.volumeTasks[index].id);
+        console.log('Volume task paused.');
+        await this.prompt('Press Enter to continue...');
+      }
+    } else if (action.toLowerCase() === 'd') {
+      const indexStr = await this.prompt('Delete which # : ');
+      const index = parseInt(indexStr, 10) - 1;
+      if (index >= 0 && index < this.tradingConfig.volumeTasks.length) {
+        const removed = this.tradingConfig.volumeTasks.splice(index, 1)[0];
+        this.stopVolumeTask(removed.id);
+        this.saveTradingConfig();
+        console.log(`Removed volume task for ${removed.tokenSymbol}.`);
+        await this.prompt('Press Enter to continue...');
+      }
+    }
+  }
+
+  private async startVolumeTask(task: VolumeConfig): Promise<void> {
+    if (this.volumeTaskIntervals.has(task.id)) {
+      console.log('Task already running.');
+      return;
+    }
+
+    task.enabled = true;
+    this.saveTradingConfig();
+
+    console.log(`\n[Volume] Starting task for ${task.tokenSymbol}...`);
+
+    const runCycle = async () => {
+      if (task.completedCycles >= task.cycleCount) {
+        console.log(`[Volume] ${task.tokenSymbol} completed all ${task.cycleCount} cycles.`);
+        this.stopVolumeTask(task.id);
+        return;
+      }
+
+      // Get wallets in order (randomized if configured)
+      let wallets = [...task.walletIndices];
+      if (task.randomizeOrder) {
+        wallets = wallets.sort(() => Math.random() - 0.5);
+      }
+
+      for (const walletIdx of wallets) {
+        if (!task.enabled) break;
+
+        const wallet = this.config.wallets[walletIdx];
+        if (!wallet || wallet.isMain && wallet.privateKey === '[FROM_ENV]') continue;
+
+        const buyAmount = task.minBuySol + Math.random() * (task.maxBuySol - task.minBuySol);
+
+        console.log(`[Volume] ${wallet.name} buying ${buyAmount.toFixed(4)} SOL of ${task.tokenSymbol}...`);
+
+        try {
+          // Execute buy
+          let keypair: Keypair;
+          if (wallet.isMain && process.env.SOLANA_PRIVATE_KEY) {
+            keypair = Keypair.fromSecretKey(bs58.decode(process.env.SOLANA_PRIVATE_KEY));
+          } else {
+            keypair = Keypair.fromSecretKey(bs58.decode(wallet.privateKey));
+          }
+
+          await this.buyPumpFunToken(keypair, task.tokenMint, buyAmount, 15, 0.0001);
+          console.log(`[Volume] Buy success for ${wallet.name}`);
+
+          // Wait before selling
+          await new Promise(r => setTimeout(r, task.sellDelayMs));
+
+          // Get token balance and sell all
+          const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(
+            keypair.publicKey,
+            { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
+          );
+
+          for (const acc of tokenAccounts.value) {
+            const parsed = acc.account.data.parsed.info;
+            if (parsed.mint === task.tokenMint && parsed.tokenAmount.uiAmount > 0) {
+              console.log(`[Volume] ${wallet.name} selling ${parsed.tokenAmount.uiAmount} tokens...`);
+              await this.sellPumpFunToken(keypair, task.tokenMint, parsed.tokenAmount.uiAmount, 15, 0.0001);
+              console.log(`[Volume] Sell success for ${wallet.name}`);
+              break;
+            }
+          }
+        } catch (error: any) {
+          console.log(`[Volume] Error for ${wallet.name}: ${error.message}`);
+        }
+
+        // Random delay before next wallet
+        const delay = task.minDelayMs + Math.random() * (task.maxDelayMs - task.minDelayMs);
+        await new Promise(r => setTimeout(r, delay));
+      }
+
+      task.completedCycles++;
+      this.saveTradingConfig();
+      console.log(`[Volume] ${task.tokenSymbol} completed cycle ${task.completedCycles}/${task.cycleCount}`);
+
+      // Schedule next cycle
+      if (task.enabled && task.completedCycles < task.cycleCount) {
+        const nextDelay = task.minDelayMs + Math.random() * (task.maxDelayMs - task.minDelayMs);
+        setTimeout(runCycle, nextDelay);
+      }
+    };
+
+    // Start first cycle
+    runCycle();
+    this.volumeTaskIntervals.set(task.id, setTimeout(() => {}, 0)); // Placeholder
+  }
+
+  private stopVolumeTask(taskId: string): void {
+    const task = this.tradingConfig.volumeTasks.find(t => t.id === taskId);
+    if (task) {
+      task.enabled = false;
+      this.saveTradingConfig();
+    }
+
+    const interval = this.volumeTaskIntervals.get(taskId);
+    if (interval) {
+      clearTimeout(interval);
+      this.volumeTaskIntervals.delete(taskId);
+    }
+  }
+
+  // ============================================
+  // PRICE MONITOR
+  // ============================================
+
+  private async togglePriceMonitor(): Promise<void> {
+    if (this.priceMonitorInterval) {
+      clearInterval(this.priceMonitorInterval);
+      this.priceMonitorInterval = null;
+      console.log('\nPrice monitor stopped.');
+    } else {
+      this.startPriceMonitor();
+      console.log('\nPrice monitor started.');
+    }
+    await this.prompt('Press Enter to continue...');
+  }
+
+  private startPriceMonitor(): void {
+    if (this.priceMonitorInterval) return;
+
+    console.log('[Monitor] Starting price monitor...');
+
+    this.priceMonitorInterval = setInterval(async () => {
+      for (const autoSell of this.tradingConfig.autoSells) {
+        if (!autoSell.enabled) continue;
+
+        try {
+          // Get current price
+          const priceResp = await fetch(`${PUMPPORTAL_API_URL}/token/${autoSell.tokenMint}`);
+          if (!priceResp.ok) continue;
+
+          const priceData = await priceResp.json();
+          const currentPrice = priceData.price_sol || 0;
+
+          if (currentPrice <= 0) continue;
+
+          // Update highest price for trailing stop
+          if (currentPrice > autoSell.highestPriceSol) {
+            autoSell.highestPriceSol = currentPrice;
+            this.saveTradingConfig();
+          }
+
+          const changePercent = ((currentPrice / autoSell.entryPriceSol) - 1) * 100;
+          const fromHighPercent = ((currentPrice / autoSell.highestPriceSol) - 1) * 100;
+
+          let shouldSell = false;
+          let reason = '';
+
+          // Check take profit
+          if (autoSell.takeProfitPercent && changePercent >= autoSell.takeProfitPercent) {
+            shouldSell = true;
+            reason = `Take Profit hit (+${changePercent.toFixed(1)}%)`;
+          }
+
+          // Check stop loss
+          if (autoSell.stopLossPercent && changePercent <= autoSell.stopLossPercent) {
+            shouldSell = true;
+            reason = `Stop Loss hit (${changePercent.toFixed(1)}%)`;
+          }
+
+          // Check trailing stop
+          if (autoSell.trailingStopPercent && fromHighPercent <= -autoSell.trailingStopPercent) {
+            shouldSell = true;
+            reason = `Trailing Stop hit (${fromHighPercent.toFixed(1)}% from high)`;
+          }
+
+          if (shouldSell) {
+            console.log(`\n[AutoSell] ${autoSell.tokenSymbol}: ${reason}`);
+            await this.executeAutoSell(autoSell);
+          }
+        } catch (error: any) {
+          console.log(`[Monitor] Error checking ${autoSell.tokenSymbol}: ${error.message}`);
+        }
+      }
+    }, this.tradingConfig.priceCheckIntervalMs);
+  }
+
+  private async executeAutoSell(autoSell: AutoSellConfig): Promise<void> {
+    const wallet = this.config.wallets[autoSell.walletIndex];
+    if (!wallet) {
+      console.log(`[AutoSell] Wallet not found for ${autoSell.tokenSymbol}`);
+      return;
+    }
+
+    try {
+      let keypair: Keypair;
+      if (wallet.isMain && process.env.SOLANA_PRIVATE_KEY) {
+        keypair = Keypair.fromSecretKey(bs58.decode(process.env.SOLANA_PRIVATE_KEY));
+      } else if (wallet.privateKey && wallet.privateKey !== '[FROM_ENV]') {
+        keypair = Keypair.fromSecretKey(bs58.decode(wallet.privateKey));
+      } else {
+        console.log(`[AutoSell] Cannot access private key for ${wallet.name}`);
+        return;
+      }
+
+      // Get token balance
+      const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(
+        keypair.publicKey,
+        { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
+      );
+
+      for (const acc of tokenAccounts.value) {
+        const parsed = acc.account.data.parsed.info;
+        if (parsed.mint === autoSell.tokenMint && parsed.tokenAmount.uiAmount > 0) {
+          const sellAmount = parsed.tokenAmount.uiAmount * (autoSell.sellPercent / 100);
+
+          console.log(`[AutoSell] Selling ${sellAmount} ${autoSell.tokenSymbol}...`);
+
+          const result = await this.sellPumpFunToken(keypair, autoSell.tokenMint, sellAmount, 15, 0.0005);
+          console.log(`[AutoSell] Sell complete: ${result.signature}`);
+
+          // Disable auto-sell after execution
+          autoSell.enabled = false;
+          this.saveTradingConfig();
+          break;
+        }
+      }
+    } catch (error: any) {
+      console.log(`[AutoSell] Error selling ${autoSell.tokenSymbol}: ${error.message}`);
+    }
+  }
+
+  // ============================================
+  // SELL ALL POSITIONS
+  // ============================================
+
+  private async sellAllPositions(): Promise<void> {
+    this.clearScreen();
+    console.log('\n--- Sell All Positions ---\n');
+    console.log('WARNING: This will sell ALL token holdings across ALL wallets!\n');
+
+    const confirm = await this.prompt('Type "SELL ALL" to confirm: ');
+    if (confirm !== 'SELL ALL') {
+      console.log('Cancelled.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    console.log('\nSelling all positions...\n');
+
+    for (const wallet of this.config.wallets) {
+      try {
+        let keypair: Keypair;
+        if (wallet.isMain && process.env.SOLANA_PRIVATE_KEY) {
+          keypair = Keypair.fromSecretKey(bs58.decode(process.env.SOLANA_PRIVATE_KEY));
+        } else if (wallet.privateKey && wallet.privateKey !== '[FROM_ENV]') {
+          keypair = Keypair.fromSecretKey(bs58.decode(wallet.privateKey));
+        } else {
+          continue;
+        }
+
+        const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(
+          keypair.publicKey,
+          { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
+        );
+
+        for (const acc of tokenAccounts.value) {
+          const parsed = acc.account.data.parsed.info;
+          const balance = parsed.tokenAmount.uiAmount;
+
+          if (balance > 0) {
+            console.log(`${wallet.name}: Selling ${balance} of ${parsed.mint.substring(0, 8)}...`);
+            try {
+              await this.sellPumpFunToken(keypair, parsed.mint, balance, 20, 0.0005);
+              console.log(`  Success!`);
+            } catch (e: any) {
+              console.log(`  Failed: ${e.message}`);
+            }
+          }
+        }
+      } catch (error: any) {
+        console.log(`Error processing ${wallet.name}: ${error.message}`);
+      }
+    }
+
+    console.log('\nSell all complete.');
+    await this.prompt('Press Enter to continue...');
+  }
+
+  // ============================================
   // MAIN MENU
   // ============================================
 
@@ -1753,12 +2612,17 @@ class InteractiveCLI {
         ? this.config.wallets[this.config.activeWalletIndex]?.name
         : 'None';
 
+      const activeAutoSells = this.tradingConfig.autoSells.filter(a => a.enabled).length;
+      const priceMonitorStatus = this.priceMonitorInterval ? 'ON' : 'OFF';
+
       console.log(`\n  Active Wallet: ${activeWallet}`);
       console.log(`  Bundler: ${this.config.bundler.enabled ? 'ON' : 'OFF'} | Jito: ${this.config.bundler.jitoEnabled ? 'ON' : 'OFF'}`);
+      console.log(`  Auto-Sells: ${activeAutoSells} | Price Monitor: ${priceMonitorStatus}`);
 
       this.printMenu('Main Menu', [
         'Wallet Management',
         'Token Launch (PumpFun)',
+        'Trading & Automation',
         'Bundler Configuration',
         'Quick Balance Check',
         'Settings',
@@ -1775,15 +2639,18 @@ class InteractiveCLI {
           await this.tokenLaunchMenu();
           break;
         case '3':
-          await this.configureBundler();
+          await this.tradingMenu();
           break;
         case '4':
-          await this.quickCheckBalance();
+          await this.configureBundler();
           break;
         case '5':
-          await this.settingsMenu();
+          await this.quickCheckBalance();
           break;
         case '6':
+          await this.settingsMenu();
+          break;
+        case '7':
           console.log('\nStarting bot service...');
           console.log('(This would start the main index.ts service)');
           await this.prompt('Press Enter to continue...');
