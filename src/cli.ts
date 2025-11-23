@@ -333,6 +333,382 @@ class InteractiveCLI {
     await this.prompt('Press Enter to continue...');
   }
 
+  private async spreadSolToWallets(): Promise<void> {
+    this.clearScreen();
+    console.log('\n--- Spread SOL Across Wallets ---\n');
+
+    if (this.config.wallets.length < 2) {
+      console.log('  Need at least 2 wallets to spread SOL.\n');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    console.log('Select SOURCE wallet:');
+    this.config.wallets.forEach((w, i) => {
+      console.log(`  ${i + 1}. ${w.name} - ${w.publicKey.substring(0, 20)}...`);
+    });
+
+    const fromChoice = await this.prompt('\nSource wallet number: ');
+    const fromIndex = parseInt(fromChoice, 10) - 1;
+    if (fromIndex < 0 || fromIndex >= this.config.wallets.length) {
+      console.log('Invalid selection.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const sourceWallet = this.config.wallets[fromIndex];
+    const destWallets = this.config.wallets.filter((_, i) => i !== fromIndex);
+
+    if (destWallets.length === 0) {
+      console.log('No destination wallets available.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    console.log('\nDestination wallets:');
+    destWallets.forEach((w, i) => {
+      console.log(`  ${i + 1}. ${w.name}`);
+    });
+
+    const destChoice = await this.prompt('\nSelect destinations (comma-separated, or "all"): ');
+    let selectedDests: typeof destWallets;
+
+    if (destChoice.toLowerCase() === 'all') {
+      selectedDests = destWallets;
+    } else {
+      const indices = destChoice.split(',').map(s => parseInt(s.trim(), 10) - 1);
+      selectedDests = indices
+        .filter(i => i >= 0 && i < destWallets.length)
+        .map(i => destWallets[i]);
+    }
+
+    if (selectedDests.length === 0) {
+      console.log('No valid destinations selected.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const totalStr = await this.prompt('Total SOL to spread: ');
+    const totalSol = parseFloat(totalStr);
+    if (isNaN(totalSol) || totalSol <= 0) {
+      console.log('Invalid amount.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    console.log('\nDistribution method:');
+    console.log('  1. Equal split');
+    console.log('  2. Random amounts');
+    console.log('  3. Random with variance %');
+
+    const methodChoice = await this.prompt('\nSelect method: ');
+
+    let amounts: number[] = [];
+    const numDests = selectedDests.length;
+
+    switch (methodChoice) {
+      case '1': // Equal split
+        const equalAmount = totalSol / numDests;
+        amounts = Array(numDests).fill(equalAmount);
+        break;
+
+      case '2': // Random amounts
+        // Generate random weights and normalize
+        const weights = Array(numDests).fill(0).map(() => Math.random());
+        const totalWeight = weights.reduce((a, b) => a + b, 0);
+        amounts = weights.map(w => (w / totalWeight) * totalSol);
+        break;
+
+      case '3': // Random with variance
+        const varianceStr = await this.prompt('Variance % (e.g., 20 for +/- 20%): ');
+        const variance = parseFloat(varianceStr) / 100;
+        const baseAmount = totalSol / numDests;
+
+        // Generate amounts with variance
+        let rawAmounts = Array(numDests).fill(0).map(() => {
+          const randomFactor = 1 + (Math.random() * 2 - 1) * variance;
+          return baseAmount * randomFactor;
+        });
+
+        // Normalize to match total
+        const rawTotal = rawAmounts.reduce((a, b) => a + b, 0);
+        amounts = rawAmounts.map(a => (a / rawTotal) * totalSol);
+        break;
+
+      default:
+        console.log('Invalid method.');
+        await this.prompt('Press Enter to continue...');
+        return;
+    }
+
+    // Display planned distribution
+    console.log('\n--- Planned Distribution ---\n');
+    selectedDests.forEach((w, i) => {
+      console.log(`  ${w.name}: ${amounts[i].toFixed(6)} SOL`);
+    });
+    console.log(`\n  Total: ${amounts.reduce((a, b) => a + b, 0).toFixed(6)} SOL`);
+    console.log(`  From: ${sourceWallet.name}`);
+
+    const confirm = await this.prompt('\nExecute? (yes/no): ');
+    if (confirm.toLowerCase() !== 'yes') {
+      console.log('Cancelled.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    // Execute transfers
+    console.log('\nExecuting transfers...\n');
+    const fromKeypair = Keypair.fromSecretKey(bs58.decode(sourceWallet.privateKey));
+
+    for (let i = 0; i < selectedDests.length; i++) {
+      const dest = selectedDests[i];
+      const amount = amounts[i];
+
+      try {
+        const toPublicKey = new PublicKey(dest.publicKey);
+        const transaction = new Transaction().add(
+          SystemProgram.transfer({
+            fromPubkey: fromKeypair.publicKey,
+            toPubkey: toPublicKey,
+            lamports: Math.floor(amount * LAMPORTS_PER_SOL),
+          })
+        );
+
+        const signature = await sendAndConfirmTransaction(this.connection, transaction, [fromKeypair]);
+        console.log(`  [OK] ${dest.name}: ${amount.toFixed(6)} SOL`);
+        console.log(`       Sig: ${signature.substring(0, 30)}...`);
+      } catch (error: any) {
+        console.log(`  [FAIL] ${dest.name}: ${error.message}`);
+      }
+    }
+
+    console.log('\nSpread complete!');
+    await this.prompt('Press Enter to continue...');
+  }
+
+  private async collectSolFromWallets(): Promise<void> {
+    this.clearScreen();
+    console.log('\n--- Collect SOL From Wallets ---\n');
+
+    if (this.config.wallets.length < 2) {
+      console.log('  Need at least 2 wallets.\n');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    console.log('Select DESTINATION wallet (to collect into):');
+    this.config.wallets.forEach((w, i) => {
+      console.log(`  ${i + 1}. ${w.name} - ${w.publicKey.substring(0, 20)}...`);
+    });
+
+    const destChoice = await this.prompt('\nDestination wallet number: ');
+    const destIndex = parseInt(destChoice, 10) - 1;
+    if (destIndex < 0 || destIndex >= this.config.wallets.length) {
+      console.log('Invalid selection.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const destWallet = this.config.wallets[destIndex];
+    const sourceWallets = this.config.wallets.filter((_, i) => i !== destIndex && !this.config.wallets[i].isMain);
+
+    if (sourceWallets.length === 0) {
+      console.log('No source wallets available (main wallet cannot be drained).');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    // Check balances
+    console.log('\nChecking balances...\n');
+    const walletsWithBalances: Array<{ wallet: WalletInfo; balance: number }> = [];
+
+    for (const w of sourceWallets) {
+      try {
+        const balance = await this.connection.getBalance(new PublicKey(w.publicKey));
+        const solBalance = balance / LAMPORTS_PER_SOL;
+        console.log(`  ${w.name}: ${solBalance.toFixed(6)} SOL`);
+        if (solBalance > 0.001) { // Only include wallets with meaningful balance
+          walletsWithBalances.push({ wallet: w, balance: solBalance });
+        }
+      } catch (e) {
+        console.log(`  ${w.name}: (error checking balance)`);
+      }
+    }
+
+    if (walletsWithBalances.length === 0) {
+      console.log('\nNo wallets with sufficient balance to collect.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const leaveStr = await this.prompt('\nSOL to leave in each wallet (for rent, default 0.001): ');
+    const leaveAmount = parseFloat(leaveStr) || 0.001;
+
+    const totalCollectable = walletsWithBalances.reduce((sum, w) => {
+      const collectAmount = w.balance - leaveAmount - 0.000005; // minus tx fee
+      return sum + Math.max(0, collectAmount);
+    }, 0);
+
+    console.log(`\nTotal collectable: ~${totalCollectable.toFixed(6)} SOL`);
+    console.log(`Into: ${destWallet.name}`);
+
+    const confirm = await this.prompt('\nCollect? (yes/no): ');
+    if (confirm.toLowerCase() !== 'yes') {
+      console.log('Cancelled.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    console.log('\nCollecting...\n');
+    const destPublicKey = new PublicKey(destWallet.publicKey);
+
+    for (const { wallet, balance } of walletsWithBalances) {
+      const collectAmount = balance - leaveAmount - 0.000005;
+      if (collectAmount <= 0) continue;
+
+      try {
+        const fromKeypair = Keypair.fromSecretKey(bs58.decode(wallet.privateKey));
+        const transaction = new Transaction().add(
+          SystemProgram.transfer({
+            fromPubkey: fromKeypair.publicKey,
+            toPubkey: destPublicKey,
+            lamports: Math.floor(collectAmount * LAMPORTS_PER_SOL),
+          })
+        );
+
+        const signature = await sendAndConfirmTransaction(this.connection, transaction, [fromKeypair]);
+        console.log(`  [OK] ${wallet.name}: ${collectAmount.toFixed(6)} SOL`);
+        console.log(`       Sig: ${signature.substring(0, 30)}...`);
+      } catch (error: any) {
+        console.log(`  [FAIL] ${wallet.name}: ${error.message}`);
+      }
+    }
+
+    console.log('\nCollection complete!');
+    await this.prompt('Press Enter to continue...');
+  }
+
+  private async randomizeAndSpread(): Promise<void> {
+    this.clearScreen();
+    console.log('\n--- Randomize & Spread SOL ---\n');
+    console.log('This creates a random distribution pattern to avoid detection.\n');
+
+    if (this.config.wallets.length < 2) {
+      console.log('  Need at least 2 wallets.\n');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    console.log('Select SOURCE wallet:');
+    this.config.wallets.forEach((w, i) => {
+      console.log(`  ${i + 1}. ${w.name}`);
+    });
+
+    const fromChoice = await this.prompt('\nSource wallet number: ');
+    const fromIndex = parseInt(fromChoice, 10) - 1;
+    if (fromIndex < 0 || fromIndex >= this.config.wallets.length) {
+      console.log('Invalid selection.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const sourceWallet = this.config.wallets[fromIndex];
+    const destWallets = this.config.wallets.filter((_, i) => i !== fromIndex);
+
+    const totalStr = await this.prompt('Total SOL to distribute: ');
+    const totalSol = parseFloat(totalStr);
+    if (isNaN(totalSol) || totalSol <= 0) {
+      console.log('Invalid amount.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const minStr = await this.prompt('Min SOL per wallet (e.g., 0.01): ');
+    const minSol = parseFloat(minStr) || 0.01;
+
+    const maxStr = await this.prompt('Max SOL per wallet (e.g., 0.5): ');
+    const maxSol = parseFloat(maxStr) || 0.5;
+
+    if (minSol > maxSol) {
+      console.log('Min cannot be greater than max.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    // Generate random distribution
+    const distribution: Array<{ wallet: WalletInfo; amount: number }> = [];
+    let remaining = totalSol;
+    const shuffledDests = [...destWallets].sort(() => Math.random() - 0.5);
+
+    for (const wallet of shuffledDests) {
+      if (remaining < minSol) break;
+
+      // Random amount between min and max, but not more than remaining
+      const maxPossible = Math.min(maxSol, remaining - (minSol * (shuffledDests.length - distribution.length - 1)));
+      const amount = minSol + Math.random() * (maxPossible - minSol);
+
+      distribution.push({ wallet, amount });
+      remaining -= amount;
+    }
+
+    // Add any remaining to the last wallet
+    if (remaining > 0 && distribution.length > 0) {
+      distribution[distribution.length - 1].amount += remaining;
+    }
+
+    // Display plan
+    console.log('\n--- Randomized Distribution ---\n');
+    distribution.forEach(({ wallet, amount }) => {
+      console.log(`  ${wallet.name}: ${amount.toFixed(6)} SOL`);
+    });
+    console.log(`\n  Total: ${distribution.reduce((s, d) => s + d.amount, 0).toFixed(6)} SOL`);
+
+    // Add random delays option
+    const delayStr = await this.prompt('\nAdd random delays between transfers? (yes/no): ');
+    const addDelays = delayStr.toLowerCase() === 'yes';
+
+    const confirm = await this.prompt('\nExecute? (yes/no): ');
+    if (confirm.toLowerCase() !== 'yes') {
+      console.log('Cancelled.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    // Execute
+    console.log('\nExecuting randomized transfers...\n');
+    const fromKeypair = Keypair.fromSecretKey(bs58.decode(sourceWallet.privateKey));
+
+    for (let i = 0; i < distribution.length; i++) {
+      const { wallet, amount } = distribution[i];
+
+      // Random delay (1-5 seconds)
+      if (addDelays && i > 0) {
+        const delay = 1000 + Math.random() * 4000;
+        console.log(`  Waiting ${(delay / 1000).toFixed(1)}s...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+
+      try {
+        const toPublicKey = new PublicKey(wallet.publicKey);
+        const transaction = new Transaction().add(
+          SystemProgram.transfer({
+            fromPubkey: fromKeypair.publicKey,
+            toPubkey: toPublicKey,
+            lamports: Math.floor(amount * LAMPORTS_PER_SOL),
+          })
+        );
+
+        const signature = await sendAndConfirmTransaction(this.connection, transaction, [fromKeypair]);
+        console.log(`  [OK] ${wallet.name}: ${amount.toFixed(6)} SOL`);
+      } catch (error: any) {
+        console.log(`  [FAIL] ${wallet.name}: ${error.message}`);
+      }
+    }
+
+    console.log('\nRandomized spread complete!');
+    await this.prompt('Press Enter to continue...');
+  }
+
   private async deleteWallet(): Promise<void> {
     this.clearScreen();
     console.log('\n--- Delete Wallet ---\n');
@@ -481,6 +857,9 @@ class InteractiveCLI {
         'Set Active Wallet',
         'Export Wallet Private Key',
         'Fund Wallet (Transfer SOL)',
+        'Spread SOL Across Wallets',
+        'Collect SOL From Wallets',
+        'Randomize & Spread (with delays)',
         'Delete Wallet',
       ]);
 
@@ -503,6 +882,15 @@ class InteractiveCLI {
           await this.fundWallet();
           break;
         case '6':
+          await this.spreadSolToWallets();
+          break;
+        case '7':
+          await this.collectSolFromWallets();
+          break;
+        case '8':
+          await this.randomizeAndSpread();
+          break;
+        case '9':
           await this.deleteWallet();
           break;
         case '0':
