@@ -87,6 +87,8 @@ export function loadConfig(): FullConfig {
         botToken: getEnvVar('ALPHA_TELEGRAM_BOT_TOKEN', false) || undefined,
         watchedChatIds: getEnvList('ALPHA_TELEGRAM_CHATS'),
         polling: getEnvBool('ALPHA_TELEGRAM_POLLING', true),
+        botName: getEnvVar('ALPHA_TELEGRAM_BOT_NAME', false) || 'Alpha Signal Bot',
+        botDescription: getEnvVar('ALPHA_TELEGRAM_BOT_DESCRIPTION', false) || 'Multi-source crypto alpha aggregator',
       },
       reddit: {
         enabled: getEnvBool('ALPHA_REDDIT_ENABLED', false),
