@@ -4,15 +4,19 @@
   "description": "Twitter-triggered PumpFun token launcher via PumpPortal with Web UI",
   "main": "dist/index.js",
   "scripts": {
+    "start": "ts-node start.ts",
+    "launcher": "ts-node start.ts",
+    "cli": "ts-node src/cli.ts",
+    "bot": "ts-node src/index.ts",
     "build": "tsc",
     "build:web": "cd web && npm install && npm run build",
     "build:all": "npm run build && npm run build:web",
-    "start": "node dist/index.js",
+    "start:prod": "node dist/index.js",
+    "cli:prod": "node dist/cli.js",
     "dev": "ts-node src/index.ts",
     "dev:web": "cd web && npm run dev",
     "watch": "tsc -w",
-    "cli": "ts-node src/cli.ts",
-    "cli:prod": "node dist/cli.js"
+    "setup": "ts-node start.ts"
   },
   "keywords": [
     "pumpfun",
