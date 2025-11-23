@@ -1,7 +1,11 @@
-import { loadConfig } from './config';
+import { loadConfig, FullConfig } from './config';
 import { TwitterStreamService } from './twitter';
 import { PumpPortalService } from './pumpportal';
-import { ParsedLaunchCommand } from './types';
+import { SSEServer } from './sse-server';
+import { TweetClassifier } from './classifier';
+import { AlertingService } from './alerting';
+import { eventBus, EventType } from './events';
+import { ParsedLaunchCommand, TweetData } from './types';
 
 // Track launched tokens to avoid duplicates
 const launchedTokens = new Set<string>();
@@ -9,12 +13,12 @@ const launchedTokens = new Set<string>();
 async function main() {
   console.log('='.repeat(60));
   console.log('  PumpFun Twitter Launcher');
-  console.log('  Powered by PumpPortal');
+  console.log('  With SSE Streaming, Classification & Alerting');
   console.log('='.repeat(60));
   console.log();
 
   // Load configuration
-  let config;
+  let config: FullConfig;
   try {
     config = loadConfig();
     console.log('Configuration loaded successfully');
@@ -25,7 +29,23 @@ async function main() {
     process.exit(1);
   }
 
-  // Initialize PumpPortal service
+  // Initialize components
+  console.log('\nInitializing components...');
+
+  // 1. Classifier - for tweet analysis
+  const classifier = new TweetClassifier(eventBus, config.classifier);
+  console.log('  [x] Tweet classifier initialized');
+
+  // 2. Alerting service - for notifications
+  const alerting = new AlertingService(eventBus, config.alerting);
+  console.log('  [x] Alerting service initialized');
+
+  // 3. SSE Server - for real-time streaming
+  const sseServer = new SSEServer(eventBus, config.sse);
+  sseServer.setClassifier(classifier);
+  console.log('  [x] SSE server initialized');
+
+  // 4. PumpPortal service - for token creation
   console.log('\nInitializing PumpPortal service...');
   const pumpPortal = new PumpPortalService(
     config.solana,
@@ -36,27 +56,64 @@ async function main() {
   // Check wallet balance
   try {
     const balance = await pumpPortal.getBalance();
-    console.log(`Wallet address: ${pumpPortal.getWalletAddress()}`);
-    console.log(`Wallet balance: ${balance.toFixed(4)} SOL`);
+    console.log(`  Wallet address: ${pumpPortal.getWalletAddress()}`);
+    console.log(`  Wallet balance: ${balance.toFixed(4)} SOL`);
 
     if (balance < 0.1) {
-      console.warn('\nWarning: Low wallet balance. You may not have enough SOL to create tokens.');
+      eventBus.emit(EventType.ALERT_WARNING, {
+        title: 'Low Wallet Balance',
+        message: `Bot wallet has only ${balance.toFixed(4)} SOL. Consider adding more funds.`,
+        metadata: { balance, wallet: pumpPortal.getWalletAddress() },
+      });
     }
   } catch (error) {
     console.error('Failed to check wallet balance:', error);
+    eventBus.emit(EventType.SYSTEM_ERROR, {
+      component: 'pumpportal',
+      message: 'Failed to check wallet balance',
+      error: String(error),
+    });
     console.error('Make sure your Solana RPC URL is correct and accessible.');
     process.exit(1);
   }
 
-  // Initialize Twitter stream service
+  // 5. Twitter stream service
   console.log('\nInitializing Twitter stream service...');
-  console.log(`Monitoring users: ${config.twitter.usernames.join(', ') || '(none)'}`);
-  console.log(`Monitoring hashtags: ${config.twitter.hashtags.join(', ') || '(none)'}`);
+  console.log(`  Monitoring users: ${config.twitter.usernames.join(', ') || '(none)'}`);
+  console.log(`  Monitoring hashtags: ${config.twitter.hashtags.join(', ') || '(none)'}`);
 
   const twitter = new TwitterStreamService(config.twitter);
 
-  // Set up the launch handler
+  // Set up the launch handler with classifier integration
   twitter.onLaunch(async (command: ParsedLaunchCommand) => {
+    // Emit tweet received event
+    const tweetData: TweetData = {
+      id: command.tweetId,
+      text: command.tweetText,
+      authorId: 'unknown',
+      authorUsername: command.tweetAuthor,
+      createdAt: new Date(),
+    };
+
+    eventBus.emit(EventType.TWEET_RECEIVED, {
+      tweetId: command.tweetId,
+      authorUsername: command.tweetAuthor,
+      text: command.tweetText,
+    });
+
+    // Run through classifier for additional filtering
+    const filteredCommand = classifier.processAndFilter(tweetData);
+
+    if (!filteredCommand) {
+      console.log(`Tweet filtered out by classifier`);
+      eventBus.emit(EventType.TWEET_FILTERED, {
+        tweetId: command.tweetId,
+        authorUsername: command.tweetAuthor,
+        text: command.tweetText,
+      });
+      return;
+    }
+
     // Create a unique key for this launch to prevent duplicates
     const launchKey = `${command.ticker}-${command.tweetId}`;
 
@@ -73,8 +130,22 @@ async function main() {
       // Mark as launched immediately to prevent race conditions
       launchedTokens.add(launchKey);
 
+      // Emit token creating event
+      eventBus.emit(EventType.TOKEN_CREATING, {
+        ticker: command.ticker,
+        name: command.name,
+      });
+
       // Create the token
       const result = await pumpPortal.createToken(command);
+
+      // Emit success event (alerting service will handle notifications)
+      eventBus.emit(EventType.TOKEN_CREATED, {
+        ticker: command.ticker,
+        name: command.name,
+        mint: result.mint,
+        signature: result.signature,
+      });
 
       console.log('\n' + '-'.repeat(40));
       console.log('  TOKEN LAUNCH SUCCESSFUL');
@@ -88,25 +159,64 @@ async function main() {
     } catch (error) {
       console.error('\nFailed to create token:', error);
 
+      // Emit failure event
+      eventBus.emit(EventType.TOKEN_FAILED, {
+        ticker: command.ticker,
+        name: command.name,
+        error: String(error),
+      });
+
       // Remove from launched set so it can be retried
       launchedTokens.delete(launchKey);
     }
   });
 
-  // Start the Twitter stream
+  // Start all services
+  console.log('\nStarting services...');
+
+  // Start SSE server
+  await sseServer.start();
+
+  // Start Twitter stream
   try {
     await twitter.start();
   } catch (error) {
     console.error('Failed to start Twitter stream:', error);
+    eventBus.emit(EventType.SYSTEM_ERROR, {
+      component: 'twitter',
+      message: 'Failed to start Twitter stream',
+      error: String(error),
+    });
     console.error('\nMake sure your Twitter API credentials are correct.');
     console.error('You need Twitter API v2 access with filtered stream permissions.');
     process.exit(1);
   }
 
+  // Emit system started event
+  eventBus.emit(EventType.SYSTEM_STARTED, {
+    timestamp: new Date().toISOString(),
+    components: ['classifier', 'alerting', 'sse-server', 'pumpportal', 'twitter'],
+  });
+
   // Handle shutdown
   const shutdown = async () => {
     console.log('\nShutting down...');
+
+    eventBus.emit(EventType.SYSTEM_STOPPED, {
+      timestamp: new Date().toISOString(),
+      reason: 'manual shutdown',
+    });
+
     await twitter.stop();
+    await sseServer.stop();
+
+    // Log final stats
+    const stats = classifier.getStats();
+    console.log('\nFinal Statistics:');
+    console.log(`  Tweets processed: ${stats.processed}`);
+    console.log(`  Launches detected: ${stats.launches}`);
+    console.log(`  Spam filtered: ${stats.spam}`);
+
     process.exit(0);
   };
 
@@ -114,11 +224,23 @@ async function main() {
   process.on('SIGTERM', shutdown);
 
   // Keep the process running
-  console.log('\nService is running. Press Ctrl+C to stop.');
+  console.log('\n' + '='.repeat(60));
+  console.log('  Service is running');
+  console.log('='.repeat(60));
+  console.log(`  SSE Endpoint: http://localhost:${config.sse.port}/events`);
+  console.log(`  Health Check: http://localhost:${config.sse.port}/health`);
+  console.log(`  Statistics:   http://localhost:${config.sse.port}/api/stats`);
+  console.log('='.repeat(60));
+  console.log('\nPress Ctrl+C to stop.');
 }
 
 // Run the main function
 main().catch((error) => {
   console.error('Unhandled error:', error);
+  eventBus.emit(EventType.SYSTEM_ERROR, {
+    component: 'main',
+    message: 'Unhandled error in main',
+    error: String(error),
+  });
   process.exit(1);
 });
