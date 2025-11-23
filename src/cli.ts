@@ -115,10 +115,28 @@ interface VolumeConfig {
   createdAt: string;
 }
 
+interface BumpConfig {
+  id: string;
+  tokenMint: string;
+  tokenSymbol: string;
+  enabled: boolean;
+  walletIndices: number[];
+  minBuySol: number;
+  maxBuySol: number;
+  minIntervalMs: number;
+  maxIntervalMs: number;
+  totalBumps: number;          // Total bumps to perform (0 = infinite)
+  completedBumps: number;
+  rotateWallets: boolean;      // Rotate through wallets
+  currentWalletIndex: number;  // Track current wallet in rotation
+  createdAt: string;
+}
+
 interface TradingConfig {
   autoSells: AutoSellConfig[];
   positions: Position[];
   volumeTasks: VolumeConfig[];
+  bumpTasks: BumpConfig[];
   priceCheckIntervalMs: number;
 }
 
@@ -135,6 +153,7 @@ class InteractiveCLI {
   private connection: Connection;
   private priceMonitorInterval: NodeJS.Timeout | null = null;
   private volumeTaskIntervals: Map<string, NodeJS.Timeout> = new Map();
+  private bumpTaskIntervals: Map<string, NodeJS.Timeout> = new Map();
 
   constructor() {
     this.rl = readline.createInterface({
@@ -205,6 +224,7 @@ class InteractiveCLI {
       autoSells: [],
       positions: [],
       volumeTasks: [],
+      bumpTasks: [],
       priceCheckIntervalMs: 5000, // 5 seconds
     };
 
@@ -1841,9 +1861,9 @@ class InteractiveCLI {
 
       const activeAutoSells = this.tradingConfig.autoSells.filter(a => a.enabled).length;
       const activeVolumeTasks = this.tradingConfig.volumeTasks.filter(v => v.enabled).length;
+      const activeBumpTasks = this.bumpTaskIntervals.size;
 
-      console.log(`\n  Auto-Sells Active: ${activeAutoSells}`);
-      console.log(`  Volume Tasks Active: ${activeVolumeTasks}`);
+      console.log(`\n  Auto-Sells: ${activeAutoSells} | Volume Tasks: ${activeVolumeTasks} | Bump Bots: ${activeBumpTasks}`);
       console.log(`  Price Monitor: ${this.priceMonitorInterval ? 'RUNNING' : 'STOPPED'}`);
 
       this.printMenu('Trading & Automation', [
@@ -1851,7 +1871,10 @@ class InteractiveCLI {
         'View Active Auto-Sells',
         'Position Tracker',
         'Volume Generation',
-        'View Active Volume Tasks',
+        'View Volume Tasks',
+        'Bump Bot Setup',
+        'View Bump Bots',
+        'Holder Distribution',
         'Start/Stop Price Monitor',
         'Sell All Positions',
       ]);
@@ -1875,9 +1898,18 @@ class InteractiveCLI {
           await this.viewVolumeTasks();
           break;
         case '6':
-          await this.togglePriceMonitor();
+          await this.setupBumpBot();
           break;
         case '7':
+          await this.viewBumpBots();
+          break;
+        case '8':
+          await this.holderDistribution();
+          break;
+        case '9':
+          await this.togglePriceMonitor();
+          break;
+        case '10':
           await this.sellAllPositions();
           break;
         case '0':
@@ -2419,6 +2451,473 @@ class InteractiveCLI {
       clearTimeout(interval);
       this.volumeTaskIntervals.delete(taskId);
     }
+  }
+
+  // ============================================
+  // BUMP BOT
+  // ============================================
+
+  private async setupBumpBot(): Promise<void> {
+    this.clearScreen();
+    console.log('\n--- Bump Bot Setup ---\n');
+    console.log('Bump bot makes periodic small buys to keep token visible on pump.fun\n');
+
+    if (this.config.wallets.length === 0) {
+      console.log('No wallets configured.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    // Get token
+    const tokenMint = await this.prompt('Token Mint Address: ');
+    if (!tokenMint) return;
+
+    const tokenSymbol = await this.prompt('Token Symbol: ') || 'UNKNOWN';
+
+    // Select wallets
+    console.log('\nAvailable wallets:');
+    this.config.wallets.forEach((w, i) => {
+      console.log(`  ${i + 1}. ${w.name}`);
+    });
+
+    const walletsChoice = await this.prompt('\nSelect wallets (comma-separated or "all"): ');
+    let walletIndices: number[];
+
+    if (walletsChoice.toLowerCase() === 'all') {
+      walletIndices = this.config.wallets.map((_, i) => i);
+    } else {
+      walletIndices = walletsChoice.split(',').map(s => parseInt(s.trim(), 10) - 1).filter(i => i >= 0);
+    }
+
+    if (walletIndices.length === 0) {
+      console.log('No wallets selected.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    // Bump settings
+    console.log('\n--- Bump Settings ---\n');
+
+    const minBuyStr = await this.prompt('Min bump amount in SOL (default 0.001): ');
+    const minBuySol = parseFloat(minBuyStr) || 0.001;
+
+    const maxBuyStr = await this.prompt('Max bump amount in SOL (default 0.005): ');
+    const maxBuySol = parseFloat(maxBuyStr) || 0.005;
+
+    const minIntervalStr = await this.prompt('Min interval between bumps in seconds (default 60): ');
+    const minIntervalMs = (parseFloat(minIntervalStr) || 60) * 1000;
+
+    const maxIntervalStr = await this.prompt('Max interval between bumps in seconds (default 180): ');
+    const maxIntervalMs = (parseFloat(maxIntervalStr) || 180) * 1000;
+
+    const totalBumpsStr = await this.prompt('Total bumps (0 = infinite, default 50): ');
+    const totalBumps = parseInt(totalBumpsStr, 10) || 50;
+
+    const rotateStr = await this.prompt('Rotate through wallets? (yes/no, default yes): ');
+    const rotateWallets = rotateStr.toLowerCase() !== 'no';
+
+    // Create bump config
+    const bumpConfig: BumpConfig = {
+      id: this.generateId(),
+      tokenMint,
+      tokenSymbol,
+      enabled: false,
+      walletIndices,
+      minBuySol,
+      maxBuySol,
+      minIntervalMs,
+      maxIntervalMs,
+      totalBumps,
+      completedBumps: 0,
+      rotateWallets,
+      currentWalletIndex: 0,
+      createdAt: new Date().toISOString(),
+    };
+
+    this.tradingConfig.bumpTasks.push(bumpConfig);
+    this.saveTradingConfig();
+
+    // Summary
+    console.log('\n--- Bump Bot Created ---\n');
+    console.log(`Token: ${tokenSymbol}`);
+    console.log(`Wallets: ${walletIndices.length}`);
+    console.log(`Bump Amount: ${minBuySol} - ${maxBuySol} SOL`);
+    console.log(`Interval: ${minIntervalMs / 1000}s - ${maxIntervalMs / 1000}s`);
+    console.log(`Total Bumps: ${totalBumps === 0 ? 'Infinite' : totalBumps}`);
+    console.log(`Rotate Wallets: ${rotateWallets ? 'Yes' : 'No'}`);
+    console.log(`Status: PAUSED (use View Bump Bots to start)`);
+
+    await this.prompt('\nPress Enter to continue...');
+  }
+
+  private async viewBumpBots(): Promise<void> {
+    this.clearScreen();
+    console.log('\n--- Bump Bots ---\n');
+
+    if (this.tradingConfig.bumpTasks.length === 0) {
+      console.log('No bump bots configured.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    this.tradingConfig.bumpTasks.forEach((bt, i) => {
+      const isRunning = this.bumpTaskIntervals.has(bt.id);
+      console.log(`${i + 1}. [${isRunning ? 'RUNNING' : 'PAUSED'}] ${bt.tokenSymbol}`);
+      console.log(`   Mint: ${bt.tokenMint.substring(0, 16)}...`);
+      console.log(`   Wallets: ${bt.walletIndices.length} | Bumps: ${bt.completedBumps}/${bt.totalBumps || '∞'}`);
+      console.log(`   Amount: ${bt.minBuySol}-${bt.maxBuySol} SOL | Interval: ${bt.minIntervalMs / 1000}s-${bt.maxIntervalMs / 1000}s`);
+      console.log('');
+    });
+
+    console.log('\nOptions: [S]tart, [P]ause, [D]elete, [B]ack');
+    const action = await this.prompt('Select action: ');
+
+    if (action.toLowerCase() === 's') {
+      const indexStr = await this.prompt('Start which # : ');
+      const index = parseInt(indexStr, 10) - 1;
+      if (index >= 0 && index < this.tradingConfig.bumpTasks.length) {
+        this.startBumpBot(this.tradingConfig.bumpTasks[index]);
+        console.log('Bump bot started.');
+        await this.prompt('Press Enter to continue...');
+      }
+    } else if (action.toLowerCase() === 'p') {
+      const indexStr = await this.prompt('Pause which # : ');
+      const index = parseInt(indexStr, 10) - 1;
+      if (index >= 0 && index < this.tradingConfig.bumpTasks.length) {
+        this.stopBumpBot(this.tradingConfig.bumpTasks[index].id);
+        console.log('Bump bot paused.');
+        await this.prompt('Press Enter to continue...');
+      }
+    } else if (action.toLowerCase() === 'd') {
+      const indexStr = await this.prompt('Delete which # : ');
+      const index = parseInt(indexStr, 10) - 1;
+      if (index >= 0 && index < this.tradingConfig.bumpTasks.length) {
+        const removed = this.tradingConfig.bumpTasks.splice(index, 1)[0];
+        this.stopBumpBot(removed.id);
+        this.saveTradingConfig();
+        console.log(`Removed bump bot for ${removed.tokenSymbol}.`);
+        await this.prompt('Press Enter to continue...');
+      }
+    }
+  }
+
+  private startBumpBot(task: BumpConfig): void {
+    if (this.bumpTaskIntervals.has(task.id)) {
+      console.log('Bump bot already running.');
+      return;
+    }
+
+    task.enabled = true;
+    this.saveTradingConfig();
+
+    console.log(`\n[Bump] Starting bump bot for ${task.tokenSymbol}...`);
+
+    const runBump = async () => {
+      if (!task.enabled) return;
+
+      if (task.totalBumps > 0 && task.completedBumps >= task.totalBumps) {
+        console.log(`[Bump] ${task.tokenSymbol} completed all ${task.totalBumps} bumps.`);
+        this.stopBumpBot(task.id);
+        return;
+      }
+
+      // Get wallet (rotate or random)
+      let walletIdx: number;
+      if (task.rotateWallets) {
+        walletIdx = task.walletIndices[task.currentWalletIndex % task.walletIndices.length];
+        task.currentWalletIndex++;
+      } else {
+        walletIdx = task.walletIndices[Math.floor(Math.random() * task.walletIndices.length)];
+      }
+
+      const wallet = this.config.wallets[walletIdx];
+      if (!wallet) {
+        console.log(`[Bump] Wallet ${walletIdx} not found, skipping...`);
+        return;
+      }
+
+      const buyAmount = task.minBuySol + Math.random() * (task.maxBuySol - task.minBuySol);
+
+      console.log(`[Bump] ${wallet.name} bumping ${task.tokenSymbol} with ${buyAmount.toFixed(4)} SOL...`);
+
+      try {
+        let keypair: Keypair;
+        if (wallet.isMain && process.env.SOLANA_PRIVATE_KEY) {
+          keypair = Keypair.fromSecretKey(bs58.decode(process.env.SOLANA_PRIVATE_KEY));
+        } else if (wallet.privateKey && wallet.privateKey !== '[FROM_ENV]') {
+          keypair = Keypair.fromSecretKey(bs58.decode(wallet.privateKey));
+        } else {
+          console.log(`[Bump] Cannot access private key for ${wallet.name}`);
+          return;
+        }
+
+        await this.buyPumpFunToken(keypair, task.tokenMint, buyAmount, 15, 0.0001);
+        task.completedBumps++;
+        this.saveTradingConfig();
+        console.log(`[Bump] Success! Bump ${task.completedBumps}/${task.totalBumps || '∞'}`);
+      } catch (error: any) {
+        console.log(`[Bump] Error: ${error.message}`);
+      }
+
+      // Schedule next bump
+      if (task.enabled && (task.totalBumps === 0 || task.completedBumps < task.totalBumps)) {
+        const nextDelay = task.minIntervalMs + Math.random() * (task.maxIntervalMs - task.minIntervalMs);
+        const timeout = setTimeout(runBump, nextDelay);
+        this.bumpTaskIntervals.set(task.id, timeout);
+      }
+    };
+
+    // Start first bump
+    runBump();
+  }
+
+  private stopBumpBot(taskId: string): void {
+    const task = this.tradingConfig.bumpTasks.find(t => t.id === taskId);
+    if (task) {
+      task.enabled = false;
+      this.saveTradingConfig();
+    }
+
+    const interval = this.bumpTaskIntervals.get(taskId);
+    if (interval) {
+      clearTimeout(interval);
+      this.bumpTaskIntervals.delete(taskId);
+    }
+  }
+
+  // ============================================
+  // HOLDER DISTRIBUTION
+  // ============================================
+
+  private async holderDistribution(): Promise<void> {
+    this.clearScreen();
+    console.log('\n--- Holder Distribution ---\n');
+    console.log('Distribute tokens from one wallet to multiple wallets to increase holder count.\n');
+
+    if (this.config.wallets.length < 2) {
+      console.log('Need at least 2 wallets for distribution.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    // Get token mint
+    const tokenMint = await this.prompt('Token Mint Address: ');
+    if (!tokenMint) return;
+
+    // Select source wallet
+    console.log('\nSelect SOURCE wallet (has the tokens):');
+    this.config.wallets.forEach((w, i) => {
+      console.log(`  ${i + 1}. ${w.name}`);
+    });
+
+    const sourceChoice = await this.prompt('\nSource wallet #: ');
+    const sourceIndex = parseInt(sourceChoice, 10) - 1;
+
+    if (sourceIndex < 0 || sourceIndex >= this.config.wallets.length) {
+      console.log('Invalid selection.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    const sourceWallet = this.config.wallets[sourceIndex];
+
+    // Get source wallet keypair and check token balance
+    let sourceKeypair: Keypair;
+    try {
+      if (sourceWallet.isMain && process.env.SOLANA_PRIVATE_KEY) {
+        sourceKeypair = Keypair.fromSecretKey(bs58.decode(process.env.SOLANA_PRIVATE_KEY));
+      } else if (sourceWallet.privateKey && sourceWallet.privateKey !== '[FROM_ENV]') {
+        sourceKeypair = Keypair.fromSecretKey(bs58.decode(sourceWallet.privateKey));
+      } else {
+        console.log('Cannot access source wallet private key.');
+        await this.prompt('Press Enter to continue...');
+        return;
+      }
+    } catch (e) {
+      console.log('Error loading source wallet.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    // Check token balance
+    console.log('\nChecking token balance...');
+    let tokenBalance = 0;
+    let tokenAccount: PublicKey | null = null;
+
+    try {
+      const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(
+        sourceKeypair.publicKey,
+        { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
+      );
+
+      for (const acc of tokenAccounts.value) {
+        const parsed = acc.account.data.parsed.info;
+        if (parsed.mint === tokenMint) {
+          tokenBalance = parsed.tokenAmount.uiAmount || 0;
+          tokenAccount = acc.pubkey;
+          break;
+        }
+      }
+    } catch (e) {
+      console.log('Error checking balance.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    if (tokenBalance <= 0) {
+      console.log(`No tokens found in source wallet for mint ${tokenMint.substring(0, 8)}...`);
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    console.log(`\nToken Balance: ${tokenBalance.toLocaleString()} tokens`);
+
+    // Select destination wallets
+    console.log('\nSelect DESTINATION wallets:');
+    const otherWallets = this.config.wallets.filter((_, i) => i !== sourceIndex);
+    otherWallets.forEach((w, i) => {
+      const realIndex = this.config.wallets.findIndex(ww => ww.publicKey === w.publicKey);
+      console.log(`  ${realIndex + 1}. ${w.name}`);
+    });
+
+    const destChoice = await this.prompt('\nDestination wallets (comma-separated or "all"): ');
+    let destIndices: number[];
+
+    if (destChoice.toLowerCase() === 'all') {
+      destIndices = this.config.wallets.map((_, i) => i).filter(i => i !== sourceIndex);
+    } else {
+      destIndices = destChoice.split(',').map(s => parseInt(s.trim(), 10) - 1).filter(i => i >= 0 && i !== sourceIndex);
+    }
+
+    if (destIndices.length === 0) {
+      console.log('No destination wallets selected.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    // Distribution settings
+    console.log('\n--- Distribution Settings ---\n');
+
+    const percentStr = await this.prompt(`Percent of tokens to distribute (1-100, default 80): `);
+    const distributePercent = Math.min(100, Math.max(1, parseFloat(percentStr) || 80));
+
+    const totalToDistribute = tokenBalance * (distributePercent / 100);
+    const perWallet = totalToDistribute / destIndices.length;
+
+    const randomizeStr = await this.prompt('Randomize amounts? (yes/no, default yes): ');
+    const randomize = randomizeStr.toLowerCase() !== 'no';
+
+    const delayStr = await this.prompt('Delay between transfers in seconds (default 2): ');
+    const delayMs = (parseFloat(delayStr) || 2) * 1000;
+
+    // Summary and confirm
+    console.log('\n--- Distribution Summary ---\n');
+    console.log(`Source: ${sourceWallet.name}`);
+    console.log(`Destinations: ${destIndices.length} wallets`);
+    console.log(`Total to distribute: ${totalToDistribute.toLocaleString()} tokens (${distributePercent}%)`);
+    console.log(`Per wallet (avg): ~${perWallet.toLocaleString()} tokens`);
+    console.log(`Randomize: ${randomize ? 'Yes' : 'No'}`);
+
+    const confirm = await this.prompt('\nProceed with distribution? (yes/no): ');
+    if (confirm.toLowerCase() !== 'yes') {
+      console.log('Cancelled.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
+    // Execute distribution
+    console.log('\n--- Distributing Tokens ---\n');
+
+    // Calculate amounts for each wallet
+    let amounts: number[] = [];
+    if (randomize) {
+      // Random distribution that sums to totalToDistribute
+      let remaining = totalToDistribute;
+      for (let i = 0; i < destIndices.length - 1; i++) {
+        const maxForThis = remaining / (destIndices.length - i) * 1.5;
+        const minForThis = remaining / (destIndices.length - i) * 0.5;
+        const amount = minForThis + Math.random() * (maxForThis - minForThis);
+        amounts.push(Math.floor(amount));
+        remaining -= amounts[i];
+      }
+      amounts.push(Math.floor(remaining)); // Last wallet gets remainder
+    } else {
+      amounts = destIndices.map(() => Math.floor(perWallet));
+    }
+
+    // Shuffle amounts for more randomness
+    if (randomize) {
+      amounts = amounts.sort(() => Math.random() - 0.5);
+    }
+
+    let successCount = 0;
+    for (let i = 0; i < destIndices.length; i++) {
+      const destWallet = this.config.wallets[destIndices[i]];
+      const amount = amounts[i];
+
+      if (amount <= 0) continue;
+
+      console.log(`Sending ${amount.toLocaleString()} tokens to ${destWallet.name}...`);
+
+      try {
+        // Create token transfer using SPL token
+        const { createTransferInstruction, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, getAccount } = await import('@solana/spl-token');
+
+        const mintPubkey = new PublicKey(tokenMint);
+        const destPubkey = new PublicKey(destWallet.publicKey);
+
+        // Get or create destination token account
+        const destTokenAccount = await getAssociatedTokenAddress(mintPubkey, destPubkey);
+
+        const transaction = new Transaction();
+
+        // Check if destination token account exists
+        try {
+          await getAccount(this.connection, destTokenAccount);
+        } catch (e) {
+          // Account doesn't exist, create it
+          transaction.add(
+            createAssociatedTokenAccountInstruction(
+              sourceKeypair.publicKey,
+              destTokenAccount,
+              destPubkey,
+              mintPubkey
+            )
+          );
+        }
+
+        // Get source token account
+        const sourceTokenAccount = await getAssociatedTokenAddress(mintPubkey, sourceKeypair.publicKey);
+
+        // Add transfer instruction (amount needs to be in raw units)
+        // Assuming 6 decimals for pump.fun tokens
+        const rawAmount = Math.floor(amount * 1_000_000);
+
+        transaction.add(
+          createTransferInstruction(
+            sourceTokenAccount,
+            destTokenAccount,
+            sourceKeypair.publicKey,
+            rawAmount
+          )
+        );
+
+        const signature = await sendAndConfirmTransaction(this.connection, transaction, [sourceKeypair]);
+        console.log(`  Success! Tx: ${signature.substring(0, 16)}...`);
+        successCount++;
+      } catch (error: any) {
+        console.log(`  Failed: ${error.message}`);
+      }
+
+      // Delay before next transfer
+      if (i < destIndices.length - 1) {
+        await new Promise(r => setTimeout(r, delayMs));
+      }
+    }
+
+    console.log(`\n--- Distribution Complete ---`);
+    console.log(`Successful transfers: ${successCount}/${destIndices.length}`);
+    await this.prompt('\nPress Enter to continue...');
   }
 
   // ============================================
