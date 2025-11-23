@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   CheckCircle,
   XCircle,
-  Settings,
   Filter,
   Bell,
   BellOff,
@@ -13,7 +12,9 @@ import {
   ExternalLink,
   Twitter,
   RefreshCw,
+  Loader2,
 } from 'lucide-react'
+import { useAuth } from '../context/AuthContext'
 
 interface FeedEvent {
   id: string
@@ -29,7 +30,14 @@ interface FilterState {
   system: boolean
 }
 
+interface WatchedAccount {
+  id: string
+  twitter_username: string
+  is_active: boolean
+}
+
 export default function FeedPage() {
+  const { isAuthenticated } = useAuth()
   const [events, setEvents] = useState<FeedEvent[]>([])
   const [connected, setConnected] = useState(false)
   const [notifications, setNotifications] = useState(true)
@@ -40,8 +48,9 @@ export default function FeedPage() {
     system: true,
   })
   const [showFilters, setShowFilters] = useState(false)
-  const [watchedAccounts, setWatchedAccounts] = useState<string[]>([])
+  const [watchedAccounts, setWatchedAccounts] = useState<WatchedAccount[]>([])
   const [newAccount, setNewAccount] = useState('')
+  const [loadingAccount, setLoadingAccount] = useState(false)
 
   const feedRef = useRef<HTMLDivElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
@@ -53,10 +62,27 @@ export default function FeedPage() {
     // Load initial events
     loadEvents()
 
+    // Load watched accounts if authenticated
+    if (isAuthenticated) {
+      loadWatchedAccounts()
+    }
+
     return () => {
       eventSourceRef.current?.close()
     }
-  }, [])
+  }, [isAuthenticated])
+
+  const loadWatchedAccounts = async () => {
+    try {
+      const res = await fetch('/api/auth/watched-accounts', { credentials: 'include' })
+      if (res.ok) {
+        const data = await res.json()
+        setWatchedAccounts(data.accounts || [])
+      }
+    } catch {
+      // Ignore errors
+    }
+  }
 
   const connectToStream = () => {
     if (eventSourceRef.current) {
@@ -76,7 +102,7 @@ export default function FeedPage() {
       setTimeout(connectToStream, 5000)
     }
 
-    es.addEventListener('connected', (e) => {
+    es.addEventListener('connected', () => {
       setConnected(true)
     })
 
@@ -161,15 +187,56 @@ export default function FeedPage() {
     setEvents([])
   }
 
-  const addWatchedAccount = () => {
-    if (newAccount && !watchedAccounts.includes(newAccount)) {
-      setWatchedAccounts((prev) => [...prev, newAccount])
-      setNewAccount('')
+  const addWatchedAccount = async () => {
+    if (!newAccount.trim()) return
+
+    if (isAuthenticated) {
+      setLoadingAccount(true)
+      try {
+        const res = await fetch('/api/auth/watched-accounts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ twitter_username: newAccount.replace('@', '') }),
+        })
+
+        if (res.ok) {
+          const data = await res.json()
+          setWatchedAccounts(prev => [...prev, data.account])
+          setNewAccount('')
+        }
+      } catch {
+        // Ignore errors
+      } finally {
+        setLoadingAccount(false)
+      }
+    } else {
+      // For non-authenticated users, just store locally
+      const username = newAccount.replace('@', '')
+      if (!watchedAccounts.find(a => a.twitter_username === username)) {
+        setWatchedAccounts(prev => [...prev, { id: Date.now().toString(), twitter_username: username, is_active: true }])
+        setNewAccount('')
+      }
     }
   }
 
-  const removeWatchedAccount = (account: string) => {
-    setWatchedAccounts((prev) => prev.filter((a) => a !== account))
+  const removeWatchedAccount = async (account: WatchedAccount) => {
+    if (isAuthenticated) {
+      try {
+        const res = await fetch(`/api/auth/watched-accounts/${account.id}`, {
+          method: 'DELETE',
+          credentials: 'include',
+        })
+
+        if (res.ok) {
+          setWatchedAccounts(prev => prev.filter(a => a.id !== account.id))
+        }
+      } catch {
+        // Ignore errors
+      }
+    } else {
+      setWatchedAccounts(prev => prev.filter(a => a.id !== account.id))
+    }
   }
 
   const getEventTitle = (event: FeedEvent): string => {
@@ -311,9 +378,10 @@ export default function FeedPage() {
           />
           <button
             onClick={addWatchedAccount}
-            className="px-3 py-2 bg-blue-600 rounded-lg hover:bg-blue-500"
+            disabled={loadingAccount}
+            className="px-3 py-2 bg-blue-600 rounded-lg hover:bg-blue-500 disabled:opacity-50"
           >
-            +
+            {loadingAccount ? <Loader2 className="w-4 h-4 animate-spin" /> : '+'}
           </button>
         </div>
 
@@ -323,10 +391,10 @@ export default function FeedPage() {
           ) : (
             watchedAccounts.map((account) => (
               <div
-                key={account}
+                key={account.id}
                 className="flex items-center justify-between bg-dark-700 rounded-lg px-3 py-2"
               >
-                <span className="text-sm">@{account}</span>
+                <span className="text-sm">@{account.twitter_username}</span>
                 <button
                   onClick={() => removeWatchedAccount(account)}
                   className="text-gray-500 hover:text-red-400"

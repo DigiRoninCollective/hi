@@ -1,21 +1,30 @@
-import { Outlet, Link, useLocation } from 'react-router-dom'
-import { Rocket, Home, Zap, MessageSquare } from 'lucide-react'
+import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
+import { Rocket, Home, Zap, MessageSquare, Settings, LogOut, LogIn } from 'lucide-react'
 import { useState, useEffect } from 'react'
+import { useAuth } from '../context/AuthContext'
 
 export default function Layout() {
   const location = useLocation()
+  const navigate = useNavigate()
+  const { user, isAuthenticated, logout, isLoading } = useAuth()
   const [connected, setConnected] = useState(false)
   const [walletBalance, setWalletBalance] = useState<number | null>(null)
+  const [showUserMenu, setShowUserMenu] = useState(false)
 
   useEffect(() => {
-    // Check health and get stats
+    // Check health and get wallet balance
     const checkConnection = async () => {
       try {
         const res = await fetch('/api/stats')
         if (res.ok) {
           setConnected(true)
-          const data = await res.json()
-          // You could get wallet balance from an extended endpoint
+        }
+
+        // Get wallet balance
+        const walletRes = await fetch('/api/wallet')
+        if (walletRes.ok) {
+          const data = await walletRes.json()
+          setWalletBalance(data.balance)
         }
       } catch {
         setConnected(false)
@@ -27,10 +36,17 @@ export default function Layout() {
     return () => clearInterval(interval)
   }, [])
 
+  const handleLogout = async () => {
+    await logout()
+    setShowUserMenu(false)
+    navigate('/')
+  }
+
   const navItems = [
     { path: '/', label: 'Home', icon: Home },
     { path: '/deploy', label: 'Deploy', icon: Rocket },
     { path: '/feed', label: 'Feed', icon: MessageSquare },
+    { path: '/settings', label: 'Settings', icon: Settings },
   ]
 
   return (
@@ -67,8 +83,16 @@ export default function Layout() {
               })}
             </nav>
 
-            {/* Status */}
+            {/* Right side - Status & User */}
             <div className="flex items-center gap-4">
+              {/* Wallet Balance */}
+              {walletBalance !== null && (
+                <div className="text-sm text-gray-400">
+                  <span className="text-accent-green font-medium">{walletBalance.toFixed(3)}</span> SOL
+                </div>
+              )}
+
+              {/* Connection Status */}
               <div className="flex items-center gap-2">
                 <div
                   className={`w-2 h-2 rounded-full ${
@@ -79,6 +103,57 @@ export default function Layout() {
                   {connected ? 'Connected' : 'Disconnected'}
                 </span>
               </div>
+
+              {/* User Menu */}
+              {isLoading ? (
+                <div className="w-8 h-8 rounded-full bg-dark-700 animate-pulse" />
+              ) : isAuthenticated ? (
+                <div className="relative">
+                  <button
+                    onClick={() => setShowUserMenu(!showUserMenu)}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-dark-700 transition-colors"
+                  >
+                    <div className="w-8 h-8 rounded-full bg-dark-600 flex items-center justify-center text-sm font-bold">
+                      {user?.username.charAt(0).toUpperCase()}
+                    </div>
+                    <span className="text-sm hidden sm:block">{user?.username}</span>
+                  </button>
+
+                  {showUserMenu && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-10"
+                        onClick={() => setShowUserMenu(false)}
+                      />
+                      <div className="absolute right-0 mt-2 w-48 bg-dark-700 rounded-lg shadow-lg border border-dark-600 py-1 z-20">
+                        <Link
+                          to="/settings"
+                          onClick={() => setShowUserMenu(false)}
+                          className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-dark-600"
+                        >
+                          <Settings className="w-4 h-4" />
+                          Settings
+                        </Link>
+                        <button
+                          onClick={handleLogout}
+                          className="flex items-center gap-2 px-4 py-2 text-sm hover:bg-dark-600 w-full text-left text-red-400"
+                        >
+                          <LogOut className="w-4 h-4" />
+                          Sign Out
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <Link
+                  to="/login"
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-dark-700 hover:bg-dark-600 text-sm transition-colors"
+                >
+                  <LogIn className="w-4 h-4" />
+                  <span>Sign In</span>
+                </Link>
+              )}
             </div>
           </div>
         </div>
