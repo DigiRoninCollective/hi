@@ -7,6 +7,7 @@ import { AlphaAggregatorConfig, AlphaClassifierConfig } from './alpha-aggregator
 import { DiscordConfig } from './discord.service';
 import { TelegramConfig } from './telegram.service';
 import { RedditConfig } from './reddit.service';
+import { BundlerConfig } from './bundler.service';
 
 dotenv.config();
 
@@ -35,6 +36,7 @@ export interface FullConfig extends Config {
   alerting: AlertConfig;
   classifier: Partial<ClassifierConfig>;
   alpha: AlphaAggregatorConfig;
+  bundler: BundlerConfig;
 }
 
 export function loadConfig(): FullConfig {
@@ -114,6 +116,14 @@ export function loadConfig(): FullConfig {
         trustedChannels: getEnvList('ALPHA_TRUSTED_CHANNELS'),
         trustedUsers: getEnvList('ALPHA_TRUSTED_USERS'),
       },
+    },
+    bundler: {
+      enabled: getEnvBool('BUNDLER_ENABLED', false),
+      jitoEnabled: getEnvBool('JITO_ENABLED', false),
+      jitoTipLamports: parseInt(getEnvVar('JITO_TIP_LAMPORTS', false) || '10000', 10),
+      jitoBlockEngineUrl: getEnvVar('JITO_BLOCK_ENGINE_URL', false) || 'https://mainnet.block-engine.jito.wtf',
+      maxBundleSize: parseInt(getEnvVar('BUNDLE_MAX_SIZE', false) || '5', 10),
+      retryAttempts: parseInt(getEnvVar('BUNDLE_RETRY_ATTEMPTS', false) || '3', 10),
     },
   };
 }
