@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
-import { Rocket, Home, Zap, MessageSquare, Settings, LogOut, LogIn } from 'lucide-react'
+import { Rocket, Home, Zap, MessageSquare, Settings, LogOut, LogIn, TrendingUp } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
 
@@ -46,6 +46,7 @@ export default function Layout() {
     { path: '/', label: 'Home', icon: Home },
     { path: '/deploy', label: 'Deploy', icon: Rocket },
     { path: '/feed', label: 'Feed', icon: MessageSquare },
+    { path: '/alpha', label: 'Alpha', icon: TrendingUp },
     { path: '/settings', label: 'Settings', icon: Settings },
   ]
 

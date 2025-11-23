@@ -70,6 +70,13 @@ export class SSEServer {
   }
 
   /**
+   * Set alpha aggregator routes
+   */
+  setAlphaRouter(router: Router): void {
+    this.app.use('/api/alpha', router);
+  }
+
+  /**
    * Set the classifier for stats endpoint
    */
   setClassifier(classifier: TweetClassifier): void {

@@ -10,6 +10,14 @@ import {
   TokenTransaction, TokenTransactionInsert,
   Event, EventInsert,
   Json,
+  // Alpha aggregator types
+  WatchedDiscordChannel, WatchedDiscordChannelInsert,
+  WatchedTelegramChannel, WatchedTelegramChannelInsert,
+  WatchedSubreddit, WatchedSubredditInsert,
+  AlphaSignal, AlphaSignalInsert,
+  UserAlphaFilter, UserAlphaFilterInsert,
+  UserSignalInteraction, UserSignalInteractionInsert,
+  AlphaSourceType, AlphaSignalCategory, AlphaSignalPriority,
 } from './database.types';
 
 // User operations
@@ -422,4 +430,348 @@ export async function saveEventsBatch(events: EventInsert[]): Promise<number> {
     return 0;
   }
   return data?.length || 0;
+}
+
+// ============================================
+// Alpha Aggregator Operations
+// ============================================
+
+// Watched Discord Channels
+export async function getWatchedDiscordChannels(userId: string): Promise<WatchedDiscordChannel[]> {
+  const { data, error } = await getSupabase()
+    .from('watched_discord_channels')
+    .select()
+    .eq('user_id', userId)
+    .eq('is_active', true)
+    .order('created_at', { ascending: false });
+
+  if (error) return [];
+  return data || [];
+}
+
+export async function addWatchedDiscordChannel(channel: WatchedDiscordChannelInsert): Promise<WatchedDiscordChannel | null> {
+  const { data, error } = await getSupabase()
+    .from('watched_discord_channels')
+    .upsert(channel, { onConflict: 'user_id,channel_id' })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error adding watched Discord channel:', error);
+    return null;
+  }
+  return data;
+}
+
+export async function removeWatchedDiscordChannel(id: string, userId: string): Promise<boolean> {
+  const { error } = await getSupabase()
+    .from('watched_discord_channels')
+    .update({ is_active: false })
+    .eq('id', id)
+    .eq('user_id', userId);
+
+  return !error;
+}
+
+// Watched Telegram Channels
+export async function getWatchedTelegramChannels(userId: string): Promise<WatchedTelegramChannel[]> {
+  const { data, error } = await getSupabase()
+    .from('watched_telegram_channels')
+    .select()
+    .eq('user_id', userId)
+    .eq('is_active', true)
+    .order('created_at', { ascending: false });
+
+  if (error) return [];
+  return data || [];
+}
+
+export async function addWatchedTelegramChannel(channel: WatchedTelegramChannelInsert): Promise<WatchedTelegramChannel | null> {
+  const { data, error } = await getSupabase()
+    .from('watched_telegram_channels')
+    .upsert(channel, { onConflict: 'user_id,chat_id' })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error adding watched Telegram channel:', error);
+    return null;
+  }
+  return data;
+}
+
+export async function removeWatchedTelegramChannel(id: string, userId: string): Promise<boolean> {
+  const { error } = await getSupabase()
+    .from('watched_telegram_channels')
+    .update({ is_active: false })
+    .eq('id', id)
+    .eq('user_id', userId);
+
+  return !error;
+}
+
+// Watched Subreddits
+export async function getWatchedSubreddits(userId: string): Promise<WatchedSubreddit[]> {
+  const { data, error } = await getSupabase()
+    .from('watched_subreddits')
+    .select()
+    .eq('user_id', userId)
+    .eq('is_active', true)
+    .order('created_at', { ascending: false });
+
+  if (error) return [];
+  return data || [];
+}
+
+export async function addWatchedSubreddit(subreddit: WatchedSubredditInsert): Promise<WatchedSubreddit | null> {
+  const { data, error } = await getSupabase()
+    .from('watched_subreddits')
+    .upsert(subreddit, { onConflict: 'user_id,subreddit' })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error adding watched subreddit:', error);
+    return null;
+  }
+  return data;
+}
+
+export async function removeWatchedSubreddit(id: string, userId: string): Promise<boolean> {
+  const { error } = await getSupabase()
+    .from('watched_subreddits')
+    .update({ is_active: false })
+    .eq('id', id)
+    .eq('user_id', userId);
+
+  return !error;
+}
+
+// Alpha Signals
+export async function saveAlphaSignal(signal: AlphaSignalInsert): Promise<AlphaSignal | null> {
+  const { data, error } = await getSupabase()
+    .from('alpha_signals')
+    .upsert(signal, { onConflict: 'source,source_id' })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error saving alpha signal:', error);
+    return null;
+  }
+  return data;
+}
+
+export async function getAlphaSignals(options: {
+  limit?: number;
+  offset?: number;
+  source?: AlphaSourceType;
+  category?: AlphaSignalCategory;
+  minPriority?: AlphaSignalPriority;
+  minConfidence?: number;
+  maxRisk?: number;
+  tickers?: string[];
+}): Promise<AlphaSignal[]> {
+  let query = getSupabase()
+    .from('alpha_signals')
+    .select()
+    .order('created_at', { ascending: false });
+
+  if (options.source) {
+    query = query.eq('source', options.source);
+  }
+  if (options.category) {
+    query = query.eq('category', options.category);
+  }
+  if (options.minPriority) {
+    const priorityOrder = ['low', 'medium', 'high', 'urgent'];
+    const minIndex = priorityOrder.indexOf(options.minPriority);
+    const validPriorities = priorityOrder.slice(minIndex);
+    query = query.in('priority', validPriorities);
+  }
+  if (options.minConfidence !== undefined) {
+    query = query.gte('confidence_score', options.minConfidence);
+  }
+  if (options.maxRisk !== undefined) {
+    query = query.lte('risk_score', options.maxRisk);
+  }
+  if (options.tickers && options.tickers.length > 0) {
+    query = query.overlaps('tickers', options.tickers);
+  }
+
+  const limit = options.limit || 100;
+  const offset = options.offset || 0;
+  query = query.range(offset, offset + limit - 1);
+
+  const { data, error } = await query;
+  if (error) return [];
+  return data || [];
+}
+
+export async function getAlphaSignalById(id: string): Promise<AlphaSignal | null> {
+  const { data, error } = await getSupabase()
+    .from('alpha_signals')
+    .select()
+    .eq('id', id)
+    .single();
+
+  if (error) return null;
+  return data;
+}
+
+export async function saveAlphaSignalsBatch(signals: AlphaSignalInsert[]): Promise<number> {
+  const { data, error } = await getSupabase()
+    .from('alpha_signals')
+    .upsert(signals, { onConflict: 'source,source_id' })
+    .select();
+
+  if (error) {
+    console.error('Error saving alpha signals batch:', error);
+    return 0;
+  }
+  return data?.length || 0;
+}
+
+// User Alpha Filters
+export async function getUserAlphaFilters(userId: string): Promise<UserAlphaFilter[]> {
+  const { data, error } = await getSupabase()
+    .from('user_alpha_filters')
+    .select()
+    .eq('user_id', userId)
+    .eq('is_active', true)
+    .order('created_at', { ascending: false });
+
+  if (error) return [];
+  return data || [];
+}
+
+export async function createUserAlphaFilter(filter: UserAlphaFilterInsert): Promise<UserAlphaFilter | null> {
+  const { data, error } = await getSupabase()
+    .from('user_alpha_filters')
+    .insert(filter)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error creating user alpha filter:', error);
+    return null;
+  }
+  return data;
+}
+
+export async function updateUserAlphaFilter(id: string, userId: string, updates: Partial<UserAlphaFilterInsert>): Promise<UserAlphaFilter | null> {
+  const { data, error } = await getSupabase()
+    .from('user_alpha_filters')
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error updating user alpha filter:', error);
+    return null;
+  }
+  return data;
+}
+
+export async function deleteUserAlphaFilter(id: string, userId: string): Promise<boolean> {
+  const { error } = await getSupabase()
+    .from('user_alpha_filters')
+    .update({ is_active: false })
+    .eq('id', id)
+    .eq('user_id', userId);
+
+  return !error;
+}
+
+// User Signal Interactions
+export async function addSignalInteraction(interaction: UserSignalInteractionInsert): Promise<UserSignalInteraction | null> {
+  const { data, error } = await getSupabase()
+    .from('user_signal_interactions')
+    .upsert(interaction, { onConflict: 'user_id,signal_id,interaction_type' })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error adding signal interaction:', error);
+    return null;
+  }
+  return data;
+}
+
+export async function removeSignalInteraction(userId: string, signalId: string, interactionType: string): Promise<boolean> {
+  const { error } = await getSupabase()
+    .from('user_signal_interactions')
+    .delete()
+    .eq('user_id', userId)
+    .eq('signal_id', signalId)
+    .eq('interaction_type', interactionType);
+
+  return !error;
+}
+
+export async function getUserSignalInteractions(userId: string, interactionType?: string): Promise<UserSignalInteraction[]> {
+  let query = getSupabase()
+    .from('user_signal_interactions')
+    .select()
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+
+  if (interactionType) {
+    query = query.eq('interaction_type', interactionType);
+  }
+
+  const { data, error } = await query;
+  if (error) return [];
+  return data || [];
+}
+
+// Alpha Signal Statistics
+export async function getAlphaSignalStats(): Promise<{
+  total: number;
+  bySource: Record<string, number>;
+  byCategory: Record<string, number>;
+  byPriority: Record<string, number>;
+  last24h: number;
+}> {
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+  // Total count
+  const { count: total } = await getSupabase()
+    .from('alpha_signals')
+    .select('*', { count: 'exact', head: true });
+
+  // Last 24h count
+  const { count: last24h } = await getSupabase()
+    .from('alpha_signals')
+    .select('*', { count: 'exact', head: true })
+    .gte('created_at', yesterday.toISOString());
+
+  // Get sample for category/source breakdown
+  const { data: samples } = await getSupabase()
+    .from('alpha_signals')
+    .select('source, category, priority')
+    .limit(1000);
+
+  const bySource: Record<string, number> = {};
+  const byCategory: Record<string, number> = {};
+  const byPriority: Record<string, number> = {};
+
+  if (samples) {
+    for (const s of samples) {
+      bySource[s.source] = (bySource[s.source] || 0) + 1;
+      byCategory[s.category] = (byCategory[s.category] || 0) + 1;
+      byPriority[s.priority] = (byPriority[s.priority] || 0) + 1;
+    }
+  }
+
+  return {
+    total: total || 0,
+    bySource,
+    byCategory,
+    byPriority,
+    last24h: last24h || 0,
+  };
 }

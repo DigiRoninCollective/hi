@@ -520,3 +520,217 @@ export type SessionInsert = Database['public']['Tables']['sessions']['Insert'];
 
 export type PasswordHash = Database['public']['Tables']['password_hashes']['Row'];
 export type PasswordHashInsert = Database['public']['Tables']['password_hashes']['Insert'];
+
+// Alpha Aggregator Types
+export type AlphaSourceType = 'discord' | 'telegram' | 'reddit' | 'twitter';
+export type AlphaSignalCategory = 'token_mention' | 'launch_alert' | 'whale_movement' | 'news' | 'sentiment' | 'technical' | 'other';
+export type AlphaSignalPriority = 'low' | 'medium' | 'high' | 'urgent';
+
+// Watched Discord Channels
+export interface WatchedDiscordChannel {
+  id: string;
+  user_id: string;
+  guild_id: string;
+  guild_name: string | null;
+  channel_id: string;
+  channel_name: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface WatchedDiscordChannelInsert {
+  id?: string;
+  user_id: string;
+  guild_id: string;
+  guild_name?: string | null;
+  channel_id: string;
+  channel_name?: string | null;
+  is_active?: boolean;
+  created_at?: string;
+}
+
+// Watched Telegram Channels
+export interface WatchedTelegramChannel {
+  id: string;
+  user_id: string;
+  chat_id: string;
+  chat_name: string | null;
+  chat_type: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface WatchedTelegramChannelInsert {
+  id?: string;
+  user_id: string;
+  chat_id: string;
+  chat_name?: string | null;
+  chat_type?: string;
+  is_active?: boolean;
+  created_at?: string;
+}
+
+// Watched Subreddits
+export interface WatchedSubreddit {
+  id: string;
+  user_id: string;
+  subreddit: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface WatchedSubredditInsert {
+  id?: string;
+  user_id: string;
+  subreddit: string;
+  is_active?: boolean;
+  created_at?: string;
+}
+
+// Alpha Signals
+export interface AlphaSignal {
+  id: string;
+  source: AlphaSourceType;
+  source_id: string;
+  source_channel: string | null;
+  source_author: string | null;
+  source_author_id: string | null;
+  content: string;
+  content_raw: Json | null;
+
+  category: AlphaSignalCategory;
+  priority: AlphaSignalPriority;
+  confidence_score: number;
+  risk_score: number;
+
+  tickers: string[] | null;
+  contract_addresses: string[] | null;
+  urls: string[] | null;
+  mentions: string[] | null;
+
+  sentiment: string | null;
+  language: string | null;
+  has_media: boolean;
+  media_urls: Json | null;
+
+  engagement_score: number | null;
+  reaction_count: number | null;
+  reply_count: number | null;
+
+  source_created_at: string | null;
+  created_at: string;
+  processed_at: string | null;
+}
+
+export interface AlphaSignalInsert {
+  id?: string;
+  source: AlphaSourceType;
+  source_id: string;
+  source_channel?: string | null;
+  source_author?: string | null;
+  source_author_id?: string | null;
+  content: string;
+  content_raw?: Json | null;
+
+  category?: AlphaSignalCategory;
+  priority?: AlphaSignalPriority;
+  confidence_score?: number;
+  risk_score?: number;
+
+  tickers?: string[] | null;
+  contract_addresses?: string[] | null;
+  urls?: string[] | null;
+  mentions?: string[] | null;
+
+  sentiment?: string | null;
+  language?: string | null;
+  has_media?: boolean;
+  media_urls?: Json | null;
+
+  engagement_score?: number | null;
+  reaction_count?: number | null;
+  reply_count?: number | null;
+
+  source_created_at?: string | null;
+  created_at?: string;
+  processed_at?: string | null;
+}
+
+// User Alpha Filters
+export interface UserAlphaFilter {
+  id: string;
+  user_id: string;
+  name: string;
+  sources: AlphaSourceType[] | null;
+  categories: AlphaSignalCategory[] | null;
+  min_confidence: number | null;
+  max_risk: number | null;
+  min_priority: AlphaSignalPriority | null;
+  include_keywords: string[] | null;
+  exclude_keywords: string[] | null;
+  include_tickers: string[] | null;
+  notify_enabled: boolean;
+  notify_channels: Json | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserAlphaFilterInsert {
+  id?: string;
+  user_id: string;
+  name: string;
+  sources?: AlphaSourceType[] | null;
+  categories?: AlphaSignalCategory[] | null;
+  min_confidence?: number | null;
+  max_risk?: number | null;
+  min_priority?: AlphaSignalPriority | null;
+  include_keywords?: string[] | null;
+  exclude_keywords?: string[] | null;
+  include_tickers?: string[] | null;
+  notify_enabled?: boolean;
+  notify_channels?: Json | null;
+  is_active?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// User Signal Interactions
+export interface UserSignalInteraction {
+  id: string;
+  user_id: string;
+  signal_id: string;
+  interaction_type: string;
+  created_at: string;
+}
+
+export interface UserSignalInteractionInsert {
+  id?: string;
+  user_id: string;
+  signal_id: string;
+  interaction_type: string;
+  created_at?: string;
+}
+
+// Alpha Source Credentials
+export interface AlphaSourceCredential {
+  id: string;
+  user_id: string | null;
+  source: AlphaSourceType;
+  credential_type: string;
+  credential_value: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AlphaSourceCredentialInsert {
+  id?: string;
+  user_id?: string | null;
+  source: AlphaSourceType;
+  credential_type: string;
+  credential_value: string;
+  is_active?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}

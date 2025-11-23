@@ -3,6 +3,7 @@ import Layout from './components/Layout'
 import HomePage from './pages/HomePage'
 import TokenDeployPage from './pages/TokenDeployPage'
 import FeedPage from './pages/FeedPage'
+import AlphaFeedPage from './pages/AlphaFeedPage'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import SettingsPage from './pages/SettingsPage'
@@ -19,6 +20,7 @@ function App() {
         <Route index element={<HomePage />} />
         <Route path="deploy" element={<TokenDeployPage />} />
         <Route path="feed" element={<FeedPage />} />
+        <Route path="alpha" element={<AlphaFeedPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
     </Routes>
