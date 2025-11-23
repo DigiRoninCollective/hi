@@ -1,4 +1,5 @@
 import express, { Request, Response, Application, Router } from 'express';
+import cookieParser from 'cookie-parser';
 import * as path from 'path';
 import { EventBus, BaseEvent, EventType } from './events';
 import { TweetClassifier } from './classifier';
@@ -33,6 +34,7 @@ export class SSEServer {
   private server: ReturnType<Application['listen']> | null = null;
   private clientIdCounter: number = 0;
   private apiRouter: Router | null = null;
+  private authRouter: Router | null = null;
 
   constructor(eventBus: EventBus, config: Partial<SSEServerConfig> = {}) {
     this.eventBus = eventBus;
@@ -60,6 +62,14 @@ export class SSEServer {
   }
 
   /**
+   * Set auth routes
+   */
+  setAuthRouter(router: Router): void {
+    this.authRouter = router;
+    this.app.use('/api/auth', router);
+  }
+
+  /**
    * Set the classifier for stats endpoint
    */
   setClassifier(classifier: TweetClassifier): void {
@@ -84,6 +94,9 @@ export class SSEServer {
     // JSON body parser with larger limit for image uploads
     this.app.use(express.json({ limit: '10mb' }));
     this.app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+    // Cookie parser for session management
+    this.app.use(cookieParser());
 
     // Serve uploaded files
     this.app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));

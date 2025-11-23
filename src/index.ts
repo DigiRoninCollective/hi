@@ -7,6 +7,10 @@ import { AlertingService } from './alerting';
 import { eventBus, EventType } from './events';
 import { ParsedLaunchCommand, TweetData } from './types';
 import { createApiRoutes } from './api-routes';
+import { createAuthRoutes } from './auth-routes';
+import { initSupabase } from './supabase';
+import { cleanupExpiredSessions } from './auth.service';
+import { saveTweet, saveEvent } from './database.service';
 
 // Track launched tokens to avoid duplicates
 const launchedTokens = new Set<string>();
@@ -28,6 +32,28 @@ async function main() {
     console.error('\nMake sure you have created a .env file with all required variables.');
     console.error('See .env.example for reference.');
     process.exit(1);
+  }
+
+  // Initialize Supabase if configured
+  const supabaseEnabled = !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY);
+  if (supabaseEnabled) {
+    try {
+      initSupabase();
+      console.log('  [x] Supabase initialized');
+
+      // Set up periodic session cleanup (every hour)
+      setInterval(async () => {
+        const cleaned = await cleanupExpiredSessions();
+        if (cleaned > 0) {
+          console.log(`Cleaned up ${cleaned} expired sessions`);
+        }
+      }, 60 * 60 * 1000);
+    } catch (error) {
+      console.error('Failed to initialize Supabase:', error);
+      console.error('Continuing without database persistence...');
+    }
+  } else {
+    console.log('  [ ] Supabase not configured (using in-memory storage)');
   }
 
   // Initialize components
@@ -86,6 +112,13 @@ async function main() {
   sseServer.setPumpPortal(pumpPortal);
   console.log('  [x] API routes initialized');
 
+  // Set up auth routes (requires Supabase)
+  if (supabaseEnabled) {
+    const authRouter = createAuthRoutes();
+    sseServer.setAuthRouter(authRouter);
+    console.log('  [x] Auth routes initialized');
+  }
+
   // 5. Twitter stream service
   console.log('\nInitializing Twitter stream service...');
   console.log(`  Monitoring users: ${config.twitter.usernames.join(', ') || '(none)'}`);
@@ -109,6 +142,16 @@ async function main() {
       authorUsername: command.tweetAuthor,
       text: command.tweetText,
     });
+
+    // Save tweet to database if Supabase is enabled
+    if (supabaseEnabled) {
+      await saveTweet({
+        tweet_id: command.tweetId,
+        author_username: command.tweetAuthor,
+        content: command.tweetText,
+        is_retweet: false,
+      }).catch(err => console.error('Failed to save tweet:', err));
+    }
 
     // Run through classifier for additional filtering
     const filteredCommand = classifier.processAndFilter(tweetData);
