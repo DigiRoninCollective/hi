@@ -1,7 +1,39 @@
+import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Rocket, MessageSquare, Zap, Shield, Globe, TrendingUp } from 'lucide-react'
 
+interface Stats {
+  tokensLaunched: number
+  tweetsProcessed: number
+  activeConnections: number
+  successRate: number
+}
+
 export default function HomePage() {
+  const [stats, setStats] = useState<Stats | null>(null)
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const res = await fetch('/api/stats')
+        if (res.ok) {
+          const data = await res.json()
+          setStats({
+            tokensLaunched: data.tokensCreated || 0,
+            tweetsProcessed: data.tweetsProcessed || 0,
+            activeConnections: data.sseClients || 0,
+            successRate: data.successRate || 0,
+          })
+        }
+      } catch {
+        // Ignore errors
+      }
+    }
+
+    fetchStats()
+    const interval = setInterval(fetchStats, 5000)
+    return () => clearInterval(interval)
+  }, [])
   const features = [
     {
       icon: Rocket,
@@ -90,10 +122,10 @@ export default function HomePage() {
       <section className="bg-dark-800 rounded-xl p-8 border border-dark-600">
         <h2 className="text-2xl font-bold text-center mb-8">Live Stats</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-          <StatCard label="Tokens Launched" value="--" />
-          <StatCard label="Tweets Processed" value="--" />
-          <StatCard label="Active Connections" value="--" />
-          <StatCard label="Success Rate" value="--%" />
+          <StatCard label="Tokens Launched" value={stats ? stats.tokensLaunched.toString() : '--'} />
+          <StatCard label="Tweets Processed" value={stats ? stats.tweetsProcessed.toString() : '--'} />
+          <StatCard label="Active Connections" value={stats ? stats.activeConnections.toString() : '--'} />
+          <StatCard label="Success Rate" value={stats ? `${Math.round(stats.successRate)}%` : '--%'} />
         </div>
       </section>
     </div>

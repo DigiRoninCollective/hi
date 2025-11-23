@@ -7,6 +7,12 @@ import { AlertingService } from './alerting';
 import { eventBus, EventType } from './events';
 import { ParsedLaunchCommand, TweetData } from './types';
 import { createApiRoutes } from './api-routes';
+import { createAuthRoutes } from './auth-routes';
+import { createAlphaRoutes } from './alpha-routes';
+import { initSupabase } from './supabase';
+import { cleanupExpiredSessions } from './auth.service';
+import { saveTweet, saveEvent, saveAlphaSignal } from './database.service';
+import { AlphaAggregatorService, ClassifiedSignal } from './alpha-aggregator.service';
 
 // Track launched tokens to avoid duplicates
 const launchedTokens = new Set<string>();
@@ -28,6 +34,28 @@ async function main() {
     console.error('\nMake sure you have created a .env file with all required variables.');
     console.error('See .env.example for reference.');
     process.exit(1);
+  }
+
+  // Initialize Supabase if configured
+  const supabaseEnabled = !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY);
+  if (supabaseEnabled) {
+    try {
+      initSupabase();
+      console.log('  [x] Supabase initialized');
+
+      // Set up periodic session cleanup (every hour)
+      setInterval(async () => {
+        const cleaned = await cleanupExpiredSessions();
+        if (cleaned > 0) {
+          console.log(`Cleaned up ${cleaned} expired sessions`);
+        }
+      }, 60 * 60 * 1000);
+    } catch (error) {
+      console.error('Failed to initialize Supabase:', error);
+      console.error('Continuing without database persistence...');
+    }
+  } else {
+    console.log('  [ ] Supabase not configured (using in-memory storage)');
   }
 
   // Initialize components
@@ -86,7 +114,56 @@ async function main() {
   sseServer.setPumpPortal(pumpPortal);
   console.log('  [x] API routes initialized');
 
-  // 5. Twitter stream service
+  // Set up auth routes (requires Supabase)
+  if (supabaseEnabled) {
+    const authRouter = createAuthRoutes();
+    sseServer.setAuthRouter(authRouter);
+    console.log('  [x] Auth routes initialized');
+  }
+
+  // 6. Alpha Aggregator service - for multi-source signal aggregation
+  let alphaAggregator: AlphaAggregatorService | null = null;
+  const alphaEnabled = config.alpha.discord.enabled || config.alpha.telegram.enabled || config.alpha.reddit.enabled;
+
+  if (alphaEnabled) {
+    console.log('\nInitializing Alpha Aggregator service...');
+    alphaAggregator = new AlphaAggregatorService(config.alpha, eventBus);
+
+    // Set up signal handler to persist classified signals
+    alphaAggregator.onSignal(async (signal: ClassifiedSignal) => {
+      if (supabaseEnabled) {
+        await saveAlphaSignal(signal).catch(err =>
+          console.error('Failed to save alpha signal:', err)
+        );
+      }
+
+      // Emit event for SSE streaming
+      eventBus.emit(EventType.ALERT_INFO, {
+        title: `Alpha Signal [${signal.priority.toUpperCase()}]`,
+        message: `${signal.source}: ${signal.content.substring(0, 100)}...`,
+        metadata: {
+          source: signal.source,
+          category: signal.category,
+          priority: signal.priority,
+          tickers: signal.tickers,
+          confidence: signal.confidence_score,
+        },
+      });
+    });
+
+    console.log(`  Discord: ${config.alpha.discord.enabled ? 'enabled' : 'disabled'}`);
+    console.log(`  Telegram: ${config.alpha.telegram.enabled ? 'enabled' : 'disabled'}`);
+    console.log(`  Reddit: ${config.alpha.reddit.enabled ? 'enabled' : 'disabled'}`);
+  } else {
+    console.log('\n  [ ] Alpha Aggregator disabled (no sources configured)');
+  }
+
+  // Set up alpha routes
+  const alphaRouter = createAlphaRoutes(alphaAggregator, eventBus);
+  sseServer.setAlphaRouter(alphaRouter);
+  console.log('  [x] Alpha routes initialized');
+
+  // 7. Twitter stream service
   console.log('\nInitializing Twitter stream service...');
   console.log(`  Monitoring users: ${config.twitter.usernames.join(', ') || '(none)'}`);
   console.log(`  Monitoring hashtags: ${config.twitter.hashtags.join(', ') || '(none)'}`);
@@ -109,6 +186,16 @@ async function main() {
       authorUsername: command.tweetAuthor,
       text: command.tweetText,
     });
+
+    // Save tweet to database if Supabase is enabled
+    if (supabaseEnabled) {
+      await saveTweet({
+        tweet_id: command.tweetId,
+        author_username: command.tweetAuthor,
+        content: command.tweetText,
+        is_retweet: false,
+      }).catch(err => console.error('Failed to save tweet:', err));
+    }
 
     // Run through classifier for additional filtering
     const filteredCommand = classifier.processAndFilter(tweetData);
@@ -186,6 +273,23 @@ async function main() {
   // Start SSE server
   await sseServer.start();
 
+  // Start Alpha Aggregator
+  if (alphaAggregator) {
+    try {
+      await alphaAggregator.start();
+      console.log('  [x] Alpha Aggregator started');
+    } catch (error) {
+      console.error('Failed to start Alpha Aggregator:', error);
+      eventBus.emit(EventType.SYSTEM_ERROR, {
+        component: 'alpha-aggregator',
+        message: 'Failed to start Alpha Aggregator',
+        error: String(error),
+      });
+      console.error('\nAlpha Aggregator failed to start. Check your API credentials.');
+      // Don't exit - let other services continue
+    }
+  }
+
   // Start Twitter stream
   try {
     await twitter.start();
@@ -202,9 +306,12 @@ async function main() {
   }
 
   // Emit system started event
+  const enabledComponents = ['classifier', 'alerting', 'sse-server', 'pumpportal', 'twitter'];
+  if (alphaAggregator) enabledComponents.push('alpha-aggregator');
+
   eventBus.emit(EventType.SYSTEM_STARTED, {
     timestamp: new Date().toISOString(),
-    components: ['classifier', 'alerting', 'sse-server', 'pumpportal', 'twitter'],
+    components: enabledComponents,
   });
 
   // Handle shutdown
@@ -217,6 +324,9 @@ async function main() {
     });
 
     await twitter.stop();
+    if (alphaAggregator) {
+      await alphaAggregator.stop();
+    }
     await sseServer.stop();
 
     // Log final stats
@@ -225,6 +335,13 @@ async function main() {
     console.log(`  Tweets processed: ${stats.processed}`);
     console.log(`  Launches detected: ${stats.launches}`);
     console.log(`  Spam filtered: ${stats.spam}`);
+
+    if (alphaAggregator) {
+      const alphaStats = alphaAggregator.getStats();
+      console.log(`  Alpha signals processed: ${alphaStats.totalProcessed}`);
+      console.log(`  Alpha signals filtered: ${alphaStats.filtered}`);
+      console.log(`  High priority signals: ${alphaStats.highPriority}`);
+    }
 
     process.exit(0);
   };
