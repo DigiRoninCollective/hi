@@ -53,7 +53,7 @@ export class TweetClassifier {
   /**
    * Classify a tweet and determine if it should trigger actions
    */
-  classify(tweet: TweetData): ClassificationResult {
+  classify(tweet: TweetData, suggestedCommand?: ParsedLaunchCommand): ClassificationResult {
     this.processedCount++;
 
     const text = tweet.text.toLowerCase();
@@ -100,7 +100,7 @@ export class TweetClassifier {
     }
 
     // Try to parse as launch command
-    const launchCommand = parseLaunchCommand(tweet);
+    const launchCommand = suggestedCommand || parseLaunchCommand(tweet);
     if (launchCommand) {
       scores.launch += 0.4;
     }
@@ -157,8 +157,8 @@ export class TweetClassifier {
   /**
    * Process and filter a tweet, returning launch command if valid
    */
-  processAndFilter(tweet: TweetData): ParsedLaunchCommand | null {
-    const classification = this.classify(tweet);
+  processAndFilter(tweet: TweetData, suggestedCommand?: ParsedLaunchCommand): ParsedLaunchCommand | null {
+    const classification = this.classify(tweet, suggestedCommand);
 
     // Check if it passes thresholds
     if (!classification.isLaunchCommand) {
@@ -175,7 +175,7 @@ export class TweetClassifier {
     }
 
     // Get the parsed launch command
-    const command = parseLaunchCommand(tweet);
+    const command = suggestedCommand || parseLaunchCommand(tweet);
 
     if (command) {
       this.eventBus.emit(EventType.LAUNCH_DETECTED, {

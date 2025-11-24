@@ -25,6 +25,7 @@ export interface DiscordMessageData {
   replyCount: number;
 }
 
+// noinspection GrazieInspection
 /**
  * Discord monitoring service for alpha signal aggregation
  */
@@ -158,10 +159,8 @@ export class DiscordService {
 
     // Get channel info
     const channel = message.channel;
-    let channelName = 'Unknown';
-    if (channel instanceof TextChannel) {
-      channelName = channel.name;
-    }
+    // Not all channel types have a name (e.g., DMs)
+    const channelName = (channel as any)?.name || 'direct-message';
 
     // Build message data
     const messageData: DiscordMessageData = {

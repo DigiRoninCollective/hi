@@ -1,7 +1,10 @@
 import { Router, Request, Response } from 'express';
+import multer from 'multer';
+import fetch from 'node-fetch';
 import { PumpPortalService } from './pumpportal';
 import { EventBus, EventType } from './events';
 import { ParsedLaunchCommand } from './types';
+import { ZkMixerService, ZkProofRequest } from './zk-mixer.service';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -33,6 +36,21 @@ interface CreatedToken {
 
 const createdTokens: CreatedToken[] = [];
 const uploadDir = path.join(process.cwd(), 'uploads');
+const upload = multer({ dest: uploadDir });
+
+function verifyApiKey(req: Request, res: Response): boolean {
+  const headerKey = req.headers['x-api-key'] as string | undefined;
+  const expected = process.env.PUMPPORTAL_API_KEY;
+  if (!expected) {
+    return true; // allow if not configured
+  }
+  if (!headerKey || headerKey !== expected) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return false;
+  }
+  return true;
+}
+
 
 // Check if Supabase is configured
 const useSupabase = !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY);
@@ -44,7 +62,8 @@ if (!fs.existsSync(uploadDir)) {
 
 export function createApiRoutes(
   pumpPortal: PumpPortalService | null,
-  eventBus: EventBus
+  eventBus: EventBus,
+  zkMixer?: ZkMixerService | null
 ): Router {
   const router = Router();
 
@@ -66,24 +85,97 @@ export function createApiRoutes(
   });
 
   // Create token (with optional auth)
-  router.post('/tokens/create', authMiddleware(false), async (req: AuthenticatedRequest, res: Response) => {
+  router.post('/tokens/create', upload.single('image'), authMiddleware(false), async (req: AuthenticatedRequest, res: Response) => {
+    if (!verifyApiKey(req, res)) return;
     if (!pumpPortal) {
       return res.status(503).json({ error: 'PumpPortal service not initialized' });
     }
 
+    const uploadToIpfs = async (
+      buffer: Buffer,
+      filename: string,
+      name: string,
+      symbol: string,
+      description?: string,
+      website?: string,
+      twitterHandle?: string
+    ): Promise<string | undefined> => {
+      try {
+        const FormData = require('form-data');
+        const formData = new FormData();
+        formData.append('file', buffer, { filename, contentType: 'image/png' });
+        formData.append('name', name);
+        formData.append('symbol', symbol);
+        formData.append('description', description || `${symbol} token`);
+        formData.append('showName', 'true');
+        if (website) formData.append('website', website);
+        if (twitterHandle) formData.append('twitter', twitterHandle.startsWith('http') ? twitterHandle : `https://twitter.com/${twitterHandle.replace('@','')}`);
+
+        const resp = await fetch('https://pump.fun/api/ipfs', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (resp.ok) {
+          const json = await resp.json();
+          return json.metadataUri as string;
+        } else {
+          const errText = await resp.text();
+          console.error('[IPFS] upload failed:', errText);
+          return undefined;
+        }
+      } catch (e) {
+        console.error('[IPFS] upload error:', e);
+        return undefined;
+      }
+    };
+
     try {
-      const { name, symbol, description, website, twitterUrl, platform, buyAmount, imageUrl } = req.body;
+      const {
+        name,
+        symbol,
+        description,
+        website,
+        twitterUrl,
+        twitterHandle,
+        platform,
+        buyAmount,
+        imageUrl,
+        imageFile,
+        bannerUrl,
+        avatarUrl,
+        zkProof,
+        zkPublicSignals,
+      } = req.body;
 
       if (!name || !symbol) {
         return res.status(400).json({ error: 'Name and symbol are required' });
+      }
+
+      let resolvedImageUrl = imageUrl as string | undefined;
+
+      // If imageFile is base64, upload to pump.fun IPFS
+      if (!resolvedImageUrl && imageFile) {
+        const buffer = Buffer.from(imageFile, 'base64');
+        resolvedImageUrl = await uploadToIpfs(buffer, `${symbol}.png`, name, symbol, description, website, twitterHandle || twitterUrl);
+      }
+
+      // If multipart file provided, upload it
+      if (!resolvedImageUrl && req.file) {
+        const buffer = await fs.promises.readFile(req.file.path);
+        resolvedImageUrl = await uploadToIpfs(buffer, req.file.originalname || `${symbol}.png`, name, symbol, description, website, twitterHandle || twitterUrl);
+        fs.promises.unlink(req.file.path).catch(() => {});
       }
 
       // Create launch command
       const command: ParsedLaunchCommand = {
         ticker: symbol,
         name: name,
-        description: description || `${symbol} - Launched via PumpLauncher`,
-        imageUrl: imageUrl || undefined,
+        description: description || `${symbol} token`,
+        imageUrl: resolvedImageUrl || imageUrl || avatarUrl || undefined,
+        bannerUrl: bannerUrl || undefined,
+        website: website || undefined,
+        twitterHandle: twitterHandle || twitterUrl || undefined,
         tweetId: `manual-${uuidv4()}`,
         tweetAuthor: 'manual',
         tweetText: `Manual launch: ${symbol}`,
@@ -102,7 +194,7 @@ export function createApiRoutes(
           name,
           symbol,
           description: command.description || null,
-          image_url: imageUrl || null,
+          image_url: resolvedImageUrl || imageUrl || null,
           platform: (platform || 'pump') as 'pump' | 'bonk' | 'bags' | 'bnb' | 'usd1',
           chain: 'solana',
           created_by: req.user?.id || null,
@@ -111,8 +203,20 @@ export function createApiRoutes(
         });
       }
 
+      // ZK mixer verification (if enabled)
+      if (zkMixer && zkMixer.isEnabled()) {
+        if (!zkProof || !zkPublicSignals) {
+          return res.status(400).json({ error: 'ZK proof required' });
+        }
+        try {
+          await zkMixer.verifyAndConsume({ proof: zkProof, publicSignals: zkPublicSignals as ZkProofRequest['publicSignals'] });
+        } catch (err: any) {
+          return res.status(400).json({ error: err.message || 'ZK proof verification failed' });
+        }
+      }
+
       // Create the token
-      const result = await pumpPortal.createToken(command);
+      const result = await pumpPortal.createToken(command, zkProof, zkPublicSignals);
 
       // Store created token
       if (useSupabase) {
@@ -121,7 +225,7 @@ export function createApiRoutes(
           name,
           symbol,
           description: command.description || null,
-          image_url: imageUrl || null,
+          image_url: resolvedImageUrl || imageUrl || null,
           platform: (platform || 'pump') as 'pump' | 'bonk' | 'bags' | 'bnb' | 'usd1',
           chain: 'solana',
           created_by: req.user?.id || null,
@@ -244,14 +348,14 @@ export function createApiRoutes(
     }
 
     try {
-      const { amount } = req.body;
+      const { amount, zkProof, zkPublicSignals } = req.body;
       const mint = req.params.mint;
 
       if (!amount || amount <= 0) {
         return res.status(400).json({ error: 'Valid amount is required' });
       }
 
-      const signature = await pumpPortal.buyToken(mint, amount);
+      const signature = await pumpPortal.buyToken(mint, amount, zkProof, zkPublicSignals);
 
       // Save transaction if using Supabase
       if (useSupabase) {
@@ -292,14 +396,14 @@ export function createApiRoutes(
     }
 
     try {
-      const { amount } = req.body;
+      const { amount, zkProof, zkPublicSignals } = req.body;
       const mint = req.params.mint;
 
       if (!amount || amount <= 0) {
         return res.status(400).json({ error: 'Valid amount is required' });
       }
 
-      const signature = await pumpPortal.sellToken(mint, amount);
+      const signature = await pumpPortal.sellToken(mint, amount, zkProof, zkPublicSignals);
 
       // Save transaction if using Supabase
       if (useSupabase) {

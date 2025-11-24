@@ -1,5 +1,6 @@
 import { TwitterApi, TweetStream, ETwitterStreamEvent, TweetV2SingleStreamResult } from 'twitter-api-v2';
 import { TwitterConfig, TweetData, LaunchEventHandler } from './types';
+import { GroqService } from './groq.service';
 
 export class TwitterStreamService {
   private client: TwitterApi;
@@ -8,9 +9,11 @@ export class TwitterStreamService {
   private stream: TweetStream<TweetV2SingleStreamResult> | null = null;
   private onLaunchHandler: LaunchEventHandler | null = null;
   private userIds: Map<string, string> = new Map(); // username -> id
+  private groqService: GroqService | null;
 
-  constructor(config: TwitterConfig) {
+  constructor(config: TwitterConfig, groqService: GroqService | null = null) {
     this.config = config;
+    this.groqService = groqService;
 
     // User context client (for user-specific operations)
     this.client = new TwitterApi({
@@ -133,6 +136,8 @@ export class TwitterStreamService {
       authorId: tweet.data.author_id || 'unknown',
       authorUsername: tweet.includes?.users?.[0]?.username || 'unknown',
       createdAt: new Date(tweet.data.created_at || Date.now()),
+      urls: tweet.data?.entities?.urls?.map(u => u.expanded_url).filter(Boolean) as string[] | undefined,
+      mediaUrls: tweet.includes?.media?.map(m => m.url || m.preview_image_url).filter(Boolean) as string[] | undefined,
     };
 
     console.log(`\n[Tweet Received] @${tweetData.authorUsername}:`);
@@ -140,11 +145,31 @@ export class TwitterStreamService {
 
     // Parse the tweet for launch commands
     const { parseLaunchCommand } = await import('./parser');
-    const command = parseLaunchCommand(tweetData);
+    const commands: any[] = [];
 
-    if (command && this.onLaunchHandler) {
-      console.log(`[Launch Command Detected] Ticker: ${command.ticker}, Name: ${command.name}`);
-      await this.onLaunchHandler(command);
+    const parsed = parseLaunchCommand(tweetData);
+    if (parsed) {
+      commands.push(parsed);
+    }
+
+    // Fall back to Groq suggestions when no command is detected
+    if (commands.length === 0 && this.groqService) {
+      const suggestions = await this.groqService.suggestLaunchCommands(tweetData);
+      if (suggestions.length > 0) {
+        for (const suggestion of suggestions) {
+          console.log(`[Groq Suggestion] Ticker: ${suggestion.ticker}, Name: ${suggestion.name}`);
+          commands.push(suggestion);
+        }
+      }
+    }
+
+    if (commands.length > 0 && this.onLaunchHandler) {
+      for (const cmd of commands) {
+        console.log(`[Launch Command Detected] Ticker: ${cmd.ticker}, Name: ${cmd.name}`);
+        await this.onLaunchHandler(cmd);
+        // Respect backpressure lightly
+        await new Promise(res => setTimeout(res, 100));
+      }
     }
   }
 

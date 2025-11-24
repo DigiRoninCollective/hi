@@ -33,6 +33,9 @@ export enum EventType {
   SYSTEM_STARTED = 'system:started',
   SYSTEM_STOPPED = 'system:stopped',
   SYSTEM_ERROR = 'system:error',
+
+  // Telegram
+  TELEGRAM_MESSAGE = 'telegram:message',
 }
 
 export interface BaseEvent {
@@ -113,6 +116,7 @@ export interface EventMap {
   [EventType.SYSTEM_STARTED]: BaseEvent;
   [EventType.SYSTEM_STOPPED]: BaseEvent;
   [EventType.SYSTEM_ERROR]: BaseEvent;
+  [EventType.TELEGRAM_MESSAGE]: BaseEvent;
 }
 
 /**

@@ -61,6 +61,7 @@ interface TelegramMessage {
 }
 import { EventBus, EventType, eventBus } from './events';
 import { AlphaSignalInsert, AlphaSourceType } from './database.types';
+import fetch from 'node-fetch';
 
 export interface TelegramConfig {
   botToken?: string;
@@ -69,6 +70,9 @@ export interface TelegramConfig {
   polling?: boolean;
   botName?: string;
   botDescription?: string;
+  launchApiUrl?: string;
+  launchApiKey?: string;
+  defaultLaunchAmount?: number;
 }
 
 // User subscription preferences
@@ -92,6 +96,7 @@ export type CallbackAction =
   | 'settings'
   | 'help'
   | 'status'
+  | 'launch'
   | 'toggle_launches'
   | 'toggle_signals'
   | 'toggle_system'
@@ -118,8 +123,7 @@ export interface TelegramMessageData {
  * Telegram monitoring service for alpha signal aggregation
  */
 export class TelegramService {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private bot: any = null;
+  private bot: InstanceType<typeof TelegramBot> | null = null;
   private config: TelegramConfig;
   private eventBus: EventBus;
   private watchedChats: Set<string>;
@@ -127,11 +131,17 @@ export class TelegramService {
   private onMessageHandler: ((message: TelegramMessageData) => Promise<void>) | null = null;
   private subscriptions: Map<string, UserSubscription> = new Map();
   private botUsername: string = '';
+  private launchApiUrl?: string;
+  private launchApiKey?: string;
+  private defaultLaunchAmount: number;
 
   constructor(config: TelegramConfig, bus: EventBus = eventBus) {
     this.config = config;
     this.eventBus = bus;
     this.watchedChats = new Set(config.watchedChatIds || []);
+    this.launchApiUrl = config.launchApiUrl;
+    this.launchApiKey = config.launchApiKey;
+    this.defaultLaunchAmount = config.defaultLaunchAmount ?? 0.1;
   }
 
   // ============================================
@@ -145,6 +155,7 @@ export class TelegramService {
     return {
       inline_keyboard: [
         [
+          { text: '🚀 Launch', callback_data: 'launch' },
           { text: '🔔 Subscribe', callback_data: 'subscribe' },
           { text: '🔕 Unsubscribe', callback_data: 'unsubscribe' },
         ],
@@ -212,18 +223,22 @@ export class TelegramService {
       { command: 'subscribe', description: 'Subscribe to alerts' },
       { command: 'unsubscribe', description: 'Unsubscribe from alerts' },
       { command: 'settings', description: 'Manage your notification settings' },
+      { command: 'launch', description: 'Launch a token (manual trigger)' },
     ]);
 
     // Register command handlers
-    this.bot.onText(/\/start/, (msg: any) => this.handleStartCommand(msg));
-    this.bot.onText(/\/help/, (msg: any) => this.handleHelpCommand(msg));
-    this.bot.onText(/\/status/, (msg: any) => this.handleStatusCommand(msg));
-    this.bot.onText(/\/subscribe/, (msg: any) => this.handleSubscribeCommand(msg));
-    this.bot.onText(/\/unsubscribe/, (msg: any) => this.handleUnsubscribeCommand(msg));
-    this.bot.onText(/\/settings/, (msg: any) => this.handleSettingsCommand(msg));
+    this.bot.onText(/\/start/, (msg: TelegramMessage) => this.handleStartCommand(msg));
+    this.bot.onText(/\/help/, (msg: TelegramMessage) => this.handleHelpCommand(msg));
+    this.bot.onText(/\/status/, (msg: TelegramMessage) => this.handleStatusCommand(msg));
+    this.bot.onText(/\/subscribe/, (msg: TelegramMessage) => this.handleSubscribeCommand(msg));
+    this.bot.onText(/\/unsubscribe/, (msg: TelegramMessage) => this.handleUnsubscribeCommand(msg));
+    this.bot.onText(/\/settings/, (msg: TelegramMessage) => this.handleSettingsCommand(msg));
+    this.bot.onText(/\/launch(.*)/, (msg: TelegramMessage, match: string[] | null) =>
+      this.handleLaunchCommand(msg, match?.[1] || '')
+    );
 
     // Register callback query handler for buttons
-    this.bot.on('callback_query', (query: any) => this.handleCallbackQuery(query));
+    this.bot.on('callback_query', (query: CallbackQuery) => this.handleCallbackQuery(query));
   }
 
   /**
@@ -463,6 +478,9 @@ ${!subscription?.isActive ? '⚠️ *Note:* You are currently unsubscribed. Subs
       case 'status':
         await this.handleStatusCallback(chatId, messageId);
         break;
+      case 'launch':
+        await this.handleLaunchCallback(chatId);
+        break;
       case 'toggle_launches':
       case 'toggle_signals':
       case 'toggle_system':
@@ -639,6 +657,85 @@ ${statusEmoji} Service: ${this.isRunning ? 'Online' : 'Offline'}
         reply_markup: this.createMainMenuKeyboard(),
       }
     );
+  }
+
+  // ============================================
+  // LAUNCH COMMAND
+  // ============================================
+
+  private async handleLaunchCallback(chatId: number): Promise<void> {
+    if (!this.bot) return;
+    await this.bot.sendMessage(
+      chatId,
+      `🚀 *Launch a token*\n\nReply with: /launch SYMBOL Name\nExample: /launch NOVA Nova Token\n\nDefault buy: ${this.defaultLaunchAmount} SOL`,
+      { parse_mode: 'Markdown' }
+    );
+  }
+
+  private async handleLaunchCommand(msg: TelegramMessage, args: string): Promise<void> {
+    if (!this.bot) return;
+
+    const chatId = msg.chat.id;
+    const text = args?.trim() || '';
+    if (!text) {
+      await this.handleLaunchCallback(chatId);
+      return;
+    }
+
+    const parts = text.split(/\s+/);
+    const symbol = (parts[0] || '').replace('$', '').toUpperCase();
+    const name = parts.slice(1).join(' ') || symbol;
+
+    if (symbol.length < 2 || symbol.length > 10 || !/^[A-Z0-9]+$/.test(symbol)) {
+      await this.bot.sendMessage(chatId, '❌ Invalid symbol. Use 2-10 letters/numbers. Example: /launch NOVA Nova Token');
+      return;
+    }
+
+    await this.bot.sendMessage(chatId, `⏳ Launching *${name}* ($${symbol})...`, { parse_mode: 'Markdown' });
+
+    try {
+      await this.launchTokenFromTelegram({ name, symbol, description: `${name} launched via Telegram`, chatId: chatId.toString() });
+      await this.bot.sendMessage(
+        chatId,
+        `✅ Launch requested for *${name}* ($${symbol}). Watch the feed for confirmation.`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      await this.bot.sendMessage(
+        chatId,
+        `❌ Launch failed: ${errorMessage}`,
+        { parse_mode: 'Markdown' }
+      );
+    }
+  }
+
+  private async launchTokenFromTelegram(input: { name: string; symbol: string; description: string; chatId: string }): Promise<void> {
+    const url = this.launchApiUrl || 'http://localhost:3000/api/tokens/create';
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (this.launchApiKey) {
+      headers['x-api-key'] = this.launchApiKey;
+    }
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        name: input.name,
+        symbol: input.symbol,
+        description: input.description,
+        platform: 'pump',
+        buyAmount: this.defaultLaunchAmount,
+        telegramChatId: input.chatId,
+      }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`API ${res.status}: ${text || res.statusText}`);
+    }
   }
 
   // ============================================
@@ -847,7 +944,19 @@ ${signalData.content.substring(0, 500)}${signalData.content.length > 500 ? '...'
     console.log(`[Telegram] Message from @${messageData.authorUsername} in ${messageData.chatName}`);
     console.log(`  "${messageData.content.substring(0, 100)}${messageData.content.length > 100 ? '...' : ''}"`);
 
-    // Emit event
+    // Emit events (structured for SSE + alert)
+    this.eventBus.emit(EventType.TELEGRAM_MESSAGE, {
+      source: 'telegram',
+      chatId: messageData.chatId,
+      chatName: messageData.chatName,
+      author: messageData.authorUsername,
+      authorDisplay: messageData.authorDisplayName,
+      messageId: messageData.id,
+      content: messageData.content,
+      createdAt: messageData.createdAt.toISOString(),
+      severity: 'info',
+      mediaType: messageData.mediaType,
+    });
     this.eventBus.emit(EventType.ALERT_INFO, {
       title: 'Telegram Message',
       message: `@${messageData.authorUsername} in ${messageData.chatName}: ${messageData.content.substring(0, 50)}...`,
@@ -894,7 +1003,19 @@ ${signalData.content.substring(0, 500)}${signalData.content.length > 500 ? '...'
     console.log(`[Telegram] Channel post in ${messageData.chatName}`);
     console.log(`  "${messageData.content.substring(0, 100)}${messageData.content.length > 100 ? '...' : ''}"`);
 
-    // Emit event
+    // Emit events (structured for SSE + alert)
+    this.eventBus.emit(EventType.TELEGRAM_MESSAGE, {
+      source: 'telegram',
+      chatId: messageData.chatId,
+      chatName: messageData.chatName,
+      author: messageData.authorUsername,
+      authorDisplay: messageData.authorDisplayName,
+      messageId: messageData.id,
+      content: messageData.content,
+      createdAt: messageData.createdAt.toISOString(),
+      severity: 'info',
+      mediaType: messageData.mediaType,
+    });
     this.eventBus.emit(EventType.ALERT_INFO, {
       title: 'Telegram Channel Post',
       message: `${messageData.chatName}: ${messageData.content.substring(0, 50)}...`,

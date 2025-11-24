@@ -2,38 +2,34 @@ import {
   Connection,
   Keypair,
   VersionedTransaction,
-  TransactionMessage,
-  PublicKey,
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
 import bs58 from 'bs58';
 import fetch from 'node-fetch';
 import {
   SolanaConfig,
-  PumpPortalConfig,
   TokenDefaults,
   ParsedLaunchCommand,
-  TokenMetadataIPFS,
-  PumpPortalCreateResponse,
 } from './types';
+import { ZkMixerService, ZkProofRequest } from './zk-mixer.service';
 
 const PUMPPORTAL_API_URL = 'https://pumpportal.fun/api';
 
 export class PumpPortalService {
-  private connection: Connection;
-  private wallet: Keypair;
-  private config: PumpPortalConfig;
-  private defaults: TokenDefaults;
+  private readonly connection: Connection;
+  private readonly wallet: Keypair;
+  private readonly defaults: TokenDefaults;
+  private readonly zkMixer?: ZkMixerService | null;
 
   constructor(
     solanaConfig: SolanaConfig,
-    pumpPortalConfig: PumpPortalConfig,
-    defaults: TokenDefaults
+    defaults: TokenDefaults,
+    zkMixer?: ZkMixerService | null
   ) {
     this.connection = new Connection(solanaConfig.rpcUrl, 'confirmed');
     this.wallet = Keypair.fromSecretKey(bs58.decode(solanaConfig.privateKey));
-    this.config = pumpPortalConfig;
     this.defaults = defaults;
+    this.zkMixer = zkMixer;
 
     console.log(`Wallet initialized: ${this.wallet.publicKey.toBase58()}`);
   }
@@ -86,16 +82,53 @@ export class PumpPortalService {
     return result.metadataUri;
   }
 
+  private async sendAndConfirm(transaction: VersionedTransaction, signers: Keypair[], maxRetries?: number): Promise<string> {
+    const latestBlockhash = await this.connection.getLatestBlockhash('confirmed');
+    transaction.message.recentBlockhash = latestBlockhash.blockhash;
+
+    transaction.sign(signers);
+
+    const signature = await this.connection.sendTransaction(transaction, {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+      maxRetries,
+    });
+
+    await this.connection.confirmTransaction(
+      {
+        signature,
+        ...latestBlockhash,
+      },
+      'confirmed'
+    );
+
+    return signature;
+  }
+
+  private async verifyZkProof(action: string, zkProof?: Uint8Array, zkPublicSignals?: ZkProofRequest['publicSignals']): Promise<void> {
+    if (!this.zkMixer || !this.zkMixer.isEnabled()) {
+      return;
+    }
+
+    if (!zkProof || !zkPublicSignals) {
+      throw new Error(`ZK proof required for ${action}`);
+    }
+
+    await this.zkMixer.verifyAndConsume({ proof: zkProof, publicSignals: zkPublicSignals });
+  }
+
   /**
    * Create a new token on PumpFun via PumpPortal
    */
-  async createToken(command: ParsedLaunchCommand): Promise<{
+  async createToken(command: ParsedLaunchCommand, zkProof?: Uint8Array, zkPublicSignals?: ZkProofRequest['publicSignals']): Promise<{
     signature: string;
     mint: string;
   }> {
     console.log(`\nCreating token: ${command.ticker} (${command.name})`);
     console.log(`  Description: ${command.description?.substring(0, 50)}...`);
     console.log(`  Tweet: https://twitter.com/${command.tweetAuthor}/status/${command.tweetId}`);
+
+    await this.verifyZkProof('token creation', zkProof, zkPublicSignals);
 
     // Check wallet balance
     const balance = await this.getBalance();
@@ -149,27 +182,10 @@ export class PumpPortalService {
     const transactionData = await response.arrayBuffer();
     const transaction = VersionedTransaction.deserialize(new Uint8Array(transactionData));
 
-    // Sign the transaction with both the wallet and mint keypair
-    console.log('Signing transaction...');
-    transaction.sign([this.wallet, mintKeypair]);
-
     // Send the transaction
     console.log('Sending transaction to Solana...');
-    const signature = await this.connection.sendTransaction(transaction, {
-      skipPreflight: false,
-      preflightCommitment: 'confirmed',
-      maxRetries: 3,
-    });
-
+    const signature = await this.sendAndConfirm(transaction, [this.wallet, mintKeypair], 3);
     console.log(`Transaction sent: ${signature}`);
-
-    // Wait for confirmation
-    console.log('Waiting for confirmation...');
-    const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
-
-    if (confirmation.value.err) {
-      throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
-    }
 
     console.log(`\nToken created successfully!`);
     console.log(`  Signature: ${signature}`);
@@ -186,8 +202,10 @@ export class PumpPortalService {
   /**
    * Buy tokens on an existing PumpFun token
    */
-  async buyToken(mintAddress: string, solAmount: number): Promise<string> {
+  async buyToken(mintAddress: string, solAmount: number, zkProof?: Uint8Array, zkPublicSignals?: ZkProofRequest['publicSignals']): Promise<string> {
     console.log(`\nBuying ${solAmount} SOL worth of token ${mintAddress}`);
+
+    await this.verifyZkProof('buy', zkProof, zkPublicSignals);
 
     const response = await fetch(`${PUMPPORTAL_API_URL}/trade-local`, {
       method: 'POST',
@@ -214,14 +232,7 @@ export class PumpPortalService {
     const transactionData = await response.arrayBuffer();
     const transaction = VersionedTransaction.deserialize(new Uint8Array(transactionData));
 
-    transaction.sign([this.wallet]);
-
-    const signature = await this.connection.sendTransaction(transaction, {
-      skipPreflight: false,
-      preflightCommitment: 'confirmed',
-    });
-
-    await this.connection.confirmTransaction(signature, 'confirmed');
+    const signature = await this.sendAndConfirm(transaction, [this.wallet]);
 
     console.log(`Buy transaction confirmed: ${signature}`);
     return signature;
@@ -230,8 +241,10 @@ export class PumpPortalService {
   /**
    * Sell tokens on PumpFun
    */
-  async sellToken(mintAddress: string, tokenAmount: number): Promise<string> {
+  async sellToken(mintAddress: string, tokenAmount: number, zkProof?: Uint8Array, zkPublicSignals?: ZkProofRequest['publicSignals']): Promise<string> {
     console.log(`\nSelling ${tokenAmount} tokens of ${mintAddress}`);
+
+    await this.verifyZkProof('sell', zkProof, zkPublicSignals);
 
     const response = await fetch(`${PUMPPORTAL_API_URL}/trade-local`, {
       method: 'POST',
@@ -258,14 +271,7 @@ export class PumpPortalService {
     const transactionData = await response.arrayBuffer();
     const transaction = VersionedTransaction.deserialize(new Uint8Array(transactionData));
 
-    transaction.sign([this.wallet]);
-
-    const signature = await this.connection.sendTransaction(transaction, {
-      skipPreflight: false,
-      preflightCommitment: 'confirmed',
-    });
-
-    await this.connection.confirmTransaction(signature, 'confirmed');
+    const signature = await this.sendAndConfirm(transaction, [this.wallet]);
 
     console.log(`Sell transaction confirmed: ${signature}`);
     return signature;

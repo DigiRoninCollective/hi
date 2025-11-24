@@ -13,6 +13,8 @@ import { initSupabase } from './supabase';
 import { cleanupExpiredSessions } from './auth.service';
 import { saveTweet, saveEvent, saveAlphaSignal } from './database.service';
 import { AlphaAggregatorService, ClassifiedSignal } from './alpha-aggregator.service';
+import { GroqService } from './groq.service';
+import { ZkMixerService } from './zk-mixer.service';
 
 // Track launched tokens to avoid duplicates
 const launchedTokens = new Set<string>();
@@ -69,6 +71,12 @@ async function main() {
   const alerting = new AlertingService(eventBus, config.alerting);
   console.log('  [x] Alerting service initialized');
 
+  // ZK mixer service (Groth16/bn254 off-chain verification)
+  const zkMixerService = config.zkMixer.enabled ? new ZkMixerService(config.zkMixer) : null;
+  if (zkMixerService) {
+    console.log('  [x] ZK Mixer verification enabled (off-chain Groth16 guard)');
+  }
+
   // 3. SSE Server - for real-time streaming
   const sseServer = new SSEServer(eventBus, config.sse);
   sseServer.setClassifier(classifier);
@@ -80,8 +88,8 @@ async function main() {
   console.log('\nInitializing PumpPortal service...');
   const pumpPortal = new PumpPortalService(
     config.solana,
-    config.pumpPortal,
-    config.tokenDefaults
+    config.tokenDefaults,
+    zkMixerService
   );
 
   // Check wallet balance
@@ -109,7 +117,7 @@ async function main() {
   }
 
   // Set up API routes with PumpPortal
-  const apiRouter = createApiRoutes(pumpPortal, eventBus);
+  const apiRouter = createApiRoutes(pumpPortal, eventBus, zkMixerService);
   sseServer.setApiRouter(apiRouter);
   sseServer.setPumpPortal(pumpPortal);
   console.log('  [x] API routes initialized');
@@ -163,109 +171,142 @@ async function main() {
   sseServer.setAlphaRouter(alphaRouter);
   console.log('  [x] Alpha routes initialized');
 
-  // 7. Twitter stream service
-  console.log('\nInitializing Twitter stream service...');
-  console.log(`  Monitoring users: ${config.twitter.usernames.join(', ') || '(none)'}`);
-  console.log(`  Monitoring hashtags: ${config.twitter.hashtags.join(', ') || '(none)'}`);
+  // 7. Twitter stream service (can be disabled for local/dev)
+  let twitter: TwitterStreamService | null = null;
 
-  const twitter = new TwitterStreamService(config.twitter);
+  const groqService = config.groq.enabled && config.groq.apiKey
+    ? new GroqService(config.groq)
+    : null;
 
-  // Set up the launch handler with classifier integration
-  twitter.onLaunch(async (command: ParsedLaunchCommand) => {
-    // Emit tweet received event
-    const tweetData: TweetData = {
-      id: command.tweetId,
-      text: command.tweetText,
-      authorId: 'unknown',
-      authorUsername: command.tweetAuthor,
-      createdAt: new Date(),
-    };
-
-    eventBus.emit(EventType.TWEET_RECEIVED, {
-      tweetId: command.tweetId,
-      authorUsername: command.tweetAuthor,
-      text: command.tweetText,
-    });
-
-    // Save tweet to database if Supabase is enabled
-    if (supabaseEnabled) {
-      await saveTweet({
-        tweet_id: command.tweetId,
-        author_username: command.tweetAuthor,
-        content: command.tweetText,
-        is_retweet: false,
-      }).catch(err => console.error('Failed to save tweet:', err));
+  if (!config.twitter.enabled) {
+    console.log('\n  [ ] Twitter stream disabled (set TWITTER_ENABLED=true to enable)');
+  } else {
+    if (groqService) {
+      console.log(`\n  [x] Groq suggestions enabled (${config.groq.model})`);
+    } else if (config.groq.enabled) {
+      console.log('\n  [ ] Groq enabled but GROQ_API_KEY missing; skipping suggestions');
     }
 
-    // Run through classifier for additional filtering
-    const filteredCommand = classifier.processAndFilter(tweetData);
+    console.log('\nInitializing Twitter stream service...');
+    console.log(`  Monitoring users: ${config.twitter.usernames.join(', ') || '(none)'}`);
+    console.log(`  Monitoring hashtags: ${config.twitter.hashtags.join(', ') || '(none)'}`);
 
-    if (!filteredCommand) {
-      console.log(`Tweet filtered out by classifier`);
-      eventBus.emit(EventType.TWEET_FILTERED, {
+    twitter = new TwitterStreamService(config.twitter, groqService);
+
+    // Set up the launch handler with classifier integration
+    twitter.onLaunch(async (command: ParsedLaunchCommand) => {
+      // Emit tweet received event
+      const tweetData: TweetData = {
+        id: command.tweetId,
+        text: command.tweetText,
+        authorId: 'unknown',
+        authorUsername: command.tweetAuthor,
+        createdAt: new Date(),
+        urls: command.website ? [command.website] : undefined,
+        mediaUrls: command.imageUrl ? [command.imageUrl] : undefined,
+      };
+
+      eventBus.emit(EventType.TWEET_RECEIVED, {
         tweetId: command.tweetId,
         authorUsername: command.tweetAuthor,
         text: command.tweetText,
       });
-      return;
-    }
 
-    // Create a unique key for this launch to prevent duplicates
-    const launchKey = `${command.ticker}-${command.tweetId}`;
+      // Save tweet to database if Supabase is enabled
+      if (supabaseEnabled) {
+        await saveTweet({
+          tweet_id: command.tweetId,
+          author_username: command.tweetAuthor,
+          content: command.tweetText,
+          is_retweet: false,
+        }).catch(err => console.error('Failed to save tweet:', err));
+      }
 
-    if (launchedTokens.has(launchKey)) {
-      console.log(`\nSkipping duplicate launch: ${command.ticker}`);
-      return;
-    }
+    // Run through classifier for additional filtering
+    const filteredCommand = classifier.processAndFilter(tweetData, command);
 
-    console.log('\n' + '='.repeat(60));
-    console.log('  NEW TOKEN LAUNCH DETECTED');
-    console.log('='.repeat(60));
+    if (!filteredCommand) {
+      console.log(`Tweet filtered out by classifier`);
+      eventBus.emit(EventType.TWEET_FILTERED, {
+          tweetId: command.tweetId,
+          authorUsername: command.tweetAuthor,
+          text: command.tweetText,
+        });
+        return;
+      }
 
-    try {
-      // Mark as launched immediately to prevent race conditions
-      launchedTokens.add(launchKey);
+      // Create a unique key for this launch to prevent duplicates
+      const launchKey = `${command.ticker}-${command.tweetId}`;
 
-      // Emit token creating event
-      eventBus.emit(EventType.TOKEN_CREATING, {
-        ticker: command.ticker,
-        name: command.name,
-      });
+      if (launchedTokens.has(launchKey)) {
+        console.log(`\nSkipping duplicate launch: ${command.ticker}`);
+        return;
+      }
+
+      console.log('\n' + '='.repeat(60));
+      console.log('  NEW TOKEN LAUNCH DETECTED');
+      console.log('='.repeat(60));
+
+      try {
+        // Mark as launched immediately to prevent race conditions
+        launchedTokens.add(launchKey);
+
+        // Emit token creating event
+        eventBus.emit(EventType.TOKEN_CREATING, {
+          ticker: command.ticker,
+          name: command.name,
+        });
+
+      // If ZK mixer guard is enabled, require proof on the command
+      if (zkMixerService && zkMixerService.isEnabled()) {
+        if (!command.zkProof || !command.zkPublicSignals) {
+          console.error('ZK Mixer enabled but no proof provided; skipping launch.');
+          eventBus.emit(EventType.TOKEN_FAILED, {
+            ticker: command.ticker,
+            name: command.name,
+            error: 'Missing ZK proof',
+          });
+          // Allow retry if proof arrives later
+          launchedTokens.delete(launchKey);
+          return;
+        }
+      }
 
       // Create the token
-      const result = await pumpPortal.createToken(command);
+      const result = await pumpPortal.createToken(command, command.zkProof, command.zkPublicSignals);
 
-      // Emit success event (alerting service will handle notifications)
-      eventBus.emit(EventType.TOKEN_CREATED, {
-        ticker: command.ticker,
-        name: command.name,
-        mint: result.mint,
-        signature: result.signature,
-      });
+        // Emit success event (alerting service will handle notifications)
+        eventBus.emit(EventType.TOKEN_CREATED, {
+          ticker: command.ticker,
+          name: command.name,
+          mint: result.mint,
+          signature: result.signature,
+        });
 
-      console.log('\n' + '-'.repeat(40));
-      console.log('  TOKEN LAUNCH SUCCESSFUL');
-      console.log('-'.repeat(40));
-      console.log(`  Ticker: ${command.ticker}`);
-      console.log(`  Name: ${command.name}`);
-      console.log(`  Mint: ${result.mint}`);
-      console.log(`  Signature: ${result.signature}`);
-      console.log(`  PumpFun: https://pump.fun/${result.mint}`);
-      console.log('-'.repeat(40) + '\n');
-    } catch (error) {
-      console.error('\nFailed to create token:', error);
+        console.log('\n' + '-'.repeat(40));
+        console.log('  TOKEN LAUNCH SUCCESSFUL');
+        console.log('-'.repeat(40));
+        console.log(`  Ticker: ${command.ticker}`);
+        console.log(`  Name: ${command.name}`);
+        console.log(`  Mint: ${result.mint}`);
+        console.log(`  Signature: ${result.signature}`);
+        console.log(`  PumpFun: https://pump.fun/${result.mint}`);
+        console.log('-'.repeat(40) + '\n');
+      } catch (error) {
+        console.error('\nFailed to create token:', error);
 
-      // Emit failure event
-      eventBus.emit(EventType.TOKEN_FAILED, {
-        ticker: command.ticker,
-        name: command.name,
-        error: String(error),
-      });
+        // Emit failure event
+        eventBus.emit(EventType.TOKEN_FAILED, {
+          ticker: command.ticker,
+          name: command.name,
+          error: String(error),
+        });
 
-      // Remove from launched set so it can be retried
-      launchedTokens.delete(launchKey);
-    }
-  });
+        // Remove from launched set so it can be retried
+        launchedTokens.delete(launchKey);
+      }
+    });
+  }
 
   // Start all services
   console.log('\nStarting services...');
@@ -291,22 +332,25 @@ async function main() {
   }
 
   // Start Twitter stream
-  try {
-    await twitter.start();
-  } catch (error) {
-    console.error('Failed to start Twitter stream:', error);
-    eventBus.emit(EventType.SYSTEM_ERROR, {
-      component: 'twitter',
-      message: 'Failed to start Twitter stream',
-      error: String(error),
-    });
-    console.error('\nMake sure your Twitter API credentials are correct.');
-    console.error('You need Twitter API v2 access with filtered stream permissions.');
-    process.exit(1);
+  if (twitter) {
+    try {
+      await twitter.start();
+    } catch (error) {
+      console.error('Failed to start Twitter stream:', error);
+      eventBus.emit(EventType.SYSTEM_ERROR, {
+        component: 'twitter',
+        message: 'Failed to start Twitter stream',
+        error: String(error),
+      });
+      console.error('\nMake sure your Twitter API credentials are correct.');
+      console.error('You need Twitter API v2 access with filtered stream permissions.');
+      process.exit(1);
+    }
   }
 
   // Emit system started event
-  const enabledComponents = ['classifier', 'alerting', 'sse-server', 'pumpportal', 'twitter'];
+  const enabledComponents = ['classifier', 'alerting', 'sse-server', 'pumpportal'];
+  if (twitter) enabledComponents.push('twitter');
   if (alphaAggregator) enabledComponents.push('alpha-aggregator');
 
   eventBus.emit(EventType.SYSTEM_STARTED, {
@@ -323,7 +367,9 @@ async function main() {
       reason: 'manual shutdown',
     });
 
-    await twitter.stop();
+    if (twitter) {
+      await twitter.stop();
+    }
     if (alphaAggregator) {
       await alphaAggregator.stop();
     }
