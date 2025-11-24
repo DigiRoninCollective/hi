@@ -117,8 +117,13 @@ async function main() {
     process.exit(1);
   }
 
-  // Set up API routes with PumpPortal
-  const apiRouter = createApiRoutes(pumpPortal, eventBus, zkMixerService);
+  // Initialize Groq service early (needed for API routes)
+  const groqService = config.groq.enabled && config.groq.apiKey
+    ? new GroqService(config.groq)
+    : null;
+
+  // Set up API routes with PumpPortal and Groq
+  const apiRouter = createApiRoutes(pumpPortal, eventBus, zkMixerService, groqService);
   sseServer.setApiRouter(apiRouter);
   sseServer.setPumpPortal(pumpPortal);
   console.log('  [x] API routes initialized');
@@ -178,10 +183,6 @@ async function main() {
 
   // 7. Twitter stream service (can be disabled for local/dev)
   let twitter: TwitterStreamService | null = null;
-
-  const groqService = config.groq.enabled && config.groq.apiKey
-    ? new GroqService(config.groq)
-    : null;
 
   if (!config.twitter.enabled) {
     console.log('\n  [ ] Twitter stream disabled (set TWITTER_ENABLED=true to enable)');

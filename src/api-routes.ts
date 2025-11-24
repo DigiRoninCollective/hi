@@ -5,6 +5,7 @@ import { PumpPortalService } from './pumpportal';
 import { EventBus, EventType } from './events';
 import { ParsedLaunchCommand, getErrorMessage } from './types';
 import { ZkMixerService, ZkProofRequest } from './zk-mixer.service';
+import { GroqService } from './groq.service';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -30,6 +31,10 @@ import {
   SellTokenSchema,
   formatErrorResponse,
 } from './security.middleware';
+import { getPlatformSettings, getLaunchPreferencesDb, listWalletPool } from './database.service';
+import { decryptSecret } from './crypto.util';
+import bs58 from 'bs58';
+import { Keypair } from '@solana/web3.js';
 
 // Fallback in-memory storage (when Supabase is not configured)
 interface CreatedToken {
@@ -73,9 +78,17 @@ if (!fs.existsSync(uploadDir)) {
 export function createApiRoutes(
   pumpPortal: PumpPortalService | null,
   eventBus: EventBus,
-  zkMixer?: ZkMixerService | null
+  zkMixer?: ZkMixerService | null,
+  groqService?: GroqService | null
 ): Router {
   const router = Router();
+  const requireSTier = (req: AuthenticatedRequest, res: Response): boolean => {
+    if (req.user?.role !== 'admin') {
+      res.status(403).json({ error: 'S-tier required' });
+      return false;
+    }
+    return true;
+  };
 
   // Get wallet info
   router.get('/wallet', async (req: Request, res: Response): Promise<Response | void> => {
@@ -319,6 +332,188 @@ export function createApiRoutes(
     }
   );
 
+  // Multi-wallet buy (S-tier only)
+  router.post(
+    '/actions/buy-multi',
+    buyTokenLimiter,
+    authMiddleware(true),
+    async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+      if (!requireSTier(req, res)) return;
+      if (!pumpPortal) {
+        return res.status(503).json({ error: 'PumpPortal service not initialized' });
+      }
+      const { mint, totalAmountSol } = req.body;
+      const total = parseFloat(totalAmountSol);
+      if (!mint || !total || total <= 0) {
+        return res.status(400).json({ error: 'mint and totalAmountSol are required' });
+      }
+
+      try {
+        const prefs = await getLaunchPreferencesDb(req.user!.id);
+        const settings = await getPlatformSettings();
+        const pool = await listWalletPool(req.user!.id);
+
+        if (!prefs.enable_multi_wallet) {
+          return res.status(400).json({ error: 'Multi-wallet is not enabled in preferences' });
+        }
+        if (pool.length === 0) {
+          return res.status(400).json({ error: 'No wallets in pool' });
+        }
+
+        const walletCount = Math.max(1, Math.min(prefs.wallets_to_use, pool.length));
+        const selected = pool.slice(0, walletCount);
+
+        // Apply fee on top
+        const feeBps = settings.buy_fee_bps ?? 150;
+        const feeAmount = (total * feeBps) / 10000;
+        if (feeAmount > 0) {
+          await pumpPortal.transferSol(settings.fee_wallet, feeAmount);
+        }
+
+        // Split amounts with variance
+        const splits: number[] = [];
+        const variance = Math.max(0, prefs.amount_variance_bps);
+        let remaining = total;
+        for (let i = 0; i < walletCount; i++) {
+          if (i === walletCount - 1) {
+            splits.push(Math.max(0.0001, remaining));
+          } else {
+            const base = total / walletCount;
+            const delta = (Math.random() * 2 - 1) * (variance / 10000);
+            const amt = Math.max(0.0001, base * (1 + delta));
+            splits.push(amt);
+            remaining -= amt;
+          }
+        }
+
+        const results: { wallet: string; amount: number; signature?: string; error?: string }[] = [];
+        for (let i = 0; i < selected.length; i++) {
+          const w = selected[i];
+          const amount = Math.min(Math.max(0.0001, splits[i]), prefs.max_per_wallet_sol);
+          try {
+            const secret = decryptSecret(w.encrypted_private_key);
+            const kp = Keypair.fromSecretKey(bs58.decode(secret));
+
+            // Auto top-up if requested
+            if (prefs.auto_top_up) {
+              const bal = await pumpPortal.getBalanceFor(kp.publicKey.toBase58());
+              const needed = amount + 0.01; // padding for fees
+              if (bal < needed && prefs.top_up_amount_sol > 0) {
+                await pumpPortal.transferSol(kp.publicKey.toBase58(), prefs.top_up_amount_sol);
+              }
+            }
+
+            const sig = await pumpPortal.buyTokenWithWallet(kp, mint, amount);
+            results.push({ wallet: kp.publicKey.toBase58(), amount, signature: sig });
+          } catch (err: any) {
+            results.push({ wallet: w.public_key, amount, error: String(err?.message || err) });
+          }
+
+          // Jitter
+          if (prefs.timing_jitter_ms > 0 && i < selected.length - 1) {
+            const jitter = Math.random() * prefs.timing_jitter_ms;
+            await new Promise((resolve) => setTimeout(resolve, jitter));
+          }
+        }
+
+        res.json({
+          success: true,
+          feeAmount,
+          totalRequested: total,
+          results,
+        });
+      } catch (err: any) {
+        res.status(500).json({ error: String(err?.message || err) });
+      }
+    }
+  );
+
+  // Multi-wallet sell (S-tier only)
+  router.post(
+    '/actions/sell-multi',
+    sellTokenLimiter,
+    authMiddleware(true),
+    async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+      if (!requireSTier(req, res)) return;
+      if (!pumpPortal) {
+        return res.status(503).json({ error: 'PumpPortal service not initialized' });
+      }
+      const { mint, totalTokenAmount } = req.body;
+      const total = parseFloat(totalTokenAmount);
+      if (!mint || !total || total <= 0) {
+        return res.status(400).json({ error: 'mint and totalTokenAmount are required' });
+      }
+
+      try {
+        const prefs = await getLaunchPreferencesDb(req.user!.id);
+        const settings = await getPlatformSettings();
+        const pool = await listWalletPool(req.user!.id);
+
+        if (!prefs.enable_multi_wallet) {
+          return res.status(400).json({ error: 'Multi-wallet is not enabled in preferences' });
+        }
+        if (pool.length === 0) {
+          return res.status(400).json({ error: 'No wallets in pool' });
+        }
+
+        const walletCount = Math.max(1, Math.min(prefs.wallets_to_use, pool.length));
+        const selected = pool.slice(0, walletCount);
+
+        // Apply fee on top (from main wallet)
+        const feeBps = settings.sell_fee_bps ?? 150;
+        const feeAmount = (total * feeBps) / 10000;
+        if (feeAmount > 0) {
+          await pumpPortal.transferSol(settings.fee_wallet, feeAmount);
+        }
+
+        // Split token amounts with variance
+        const splits: number[] = [];
+        const variance = Math.max(0, prefs.amount_variance_bps);
+        let remaining = total;
+        for (let i = 0; i < walletCount; i++) {
+          if (i === walletCount - 1) {
+            splits.push(Math.max(0.0001, remaining));
+          } else {
+            const base = total / walletCount;
+            const delta = (Math.random() * 2 - 1) * (variance / 10000);
+            const amt = Math.max(0.0001, base * (1 + delta));
+            splits.push(amt);
+            remaining -= amt;
+          }
+        }
+
+        // Execute in reverse order for "auto-sell" feel
+        const results: { wallet: string; amount: number; signature?: string; error?: string }[] = [];
+        for (let idx = selected.length - 1; idx >= 0; idx--) {
+          const w = selected[idx];
+          const amount = Math.max(0.0001, splits[idx]);
+          try {
+            const secret = decryptSecret(w.encrypted_private_key);
+            const kp = Keypair.fromSecretKey(bs58.decode(secret));
+            const sig = await pumpPortal.sellTokenWithWallet(kp, mint, amount);
+            results.push({ wallet: kp.publicKey.toBase58(), amount, signature: sig });
+          } catch (err: any) {
+            results.push({ wallet: w.public_key, amount, error: String(err?.message || err) });
+          }
+
+          if (prefs.timing_jitter_ms > 0 && idx > 0) {
+            const jitter = Math.random() * prefs.timing_jitter_ms;
+            await new Promise((resolve) => setTimeout(resolve, jitter));
+          }
+        }
+
+        res.json({
+          success: true,
+          feeAmount,
+          totalRequested: total,
+          results,
+        });
+      } catch (err: any) {
+        res.status(500).json({ error: String(err?.message || err) });
+      }
+    }
+  );
+
   // Get created tokens
   router.get('/tokens', authMiddleware(false), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     const limit = parseInt(req.query.limit as string) || 50;
@@ -541,6 +736,53 @@ export function createApiRoutes(
       tweets,
       total: tweets.length,
     });
+  });
+
+  // Groq suggestions endpoint - analyze tweet and suggest token name/ticker
+  router.post('/groq/suggest', async (req: Request, res: Response): Promise<Response | void> => {
+    if (!groqService) {
+      return res.status(503).json({ error: 'Groq service not initialized' });
+    }
+
+    try {
+      const { text, tweetId, authorUsername, urls, mediaUrls } = req.body;
+
+      if (!text) {
+        return res.status(400).json({ error: 'Tweet text is required' });
+      }
+
+      // Create TweetData object for Groq service
+      const tweetData = {
+        id: tweetId || 'unknown',
+        text,
+        authorUsername: authorUsername || 'unknown',
+        authorId: 'unknown',
+        createdAt: new Date(),
+        urls,
+        mediaUrls,
+      };
+
+      // Get suggestions from Groq
+      const suggestions = await groqService.suggestLaunchCommands(tweetData);
+
+      res.json({
+        success: true,
+        suggestions: suggestions.map(cmd => ({
+          ticker: cmd.ticker,
+          name: cmd.name,
+          description: cmd.description,
+          website: cmd.website,
+          twitterHandle: cmd.twitterHandle,
+          imageUrl: cmd.imageUrl,
+          bannerUrl: cmd.bannerUrl,
+          avatarUrl: cmd.avatarUrl,
+        })),
+        count: suggestions.length,
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      res.status(500).json({ error: errorMessage });
+    }
   });
 
   return router;
