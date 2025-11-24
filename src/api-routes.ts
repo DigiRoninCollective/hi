@@ -514,6 +514,57 @@ export function createApiRoutes(
     }
   );
 
+  // Auto deploy from tweet + keyword template
+  router.post(
+    '/actions/auto-deploy',
+    createTokenLimiter,
+    authMiddleware(true),
+    async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+      if (!pumpPortal) {
+        return res.status(503).json({ error: 'PumpPortal service not initialized' });
+      }
+
+      const { keyword, tweetText, tweetAuthor, tweetId } = req.body;
+      if (!keyword || !tweetText) {
+        return res.status(400).json({ error: 'keyword and tweetText are required' });
+      }
+
+      const upper = String(keyword).trim().toUpperCase();
+      const tickerBase = upper.replace(/[^A-Z]/g, '').slice(0, 4) || 'AUTO';
+      const ticker = `${tickerBase}${Math.floor(Math.random() * 90 + 10)}`;
+      const name = `${keyword} Meme`;
+      const description = `${keyword} auto-deploy\n\n${tweetText.substring(0, 180)}`;
+
+      const command: ParsedLaunchCommand = {
+        ticker,
+        name,
+        description,
+        tweetId: tweetId || `auto-${uuidv4()}`,
+        tweetAuthor: tweetAuthor || 'auto',
+        tweetText,
+      };
+
+      try {
+        const result = await pumpPortal.createToken(command);
+        eventBus.emit(EventType.TOKEN_CREATED, {
+          ticker: command.ticker,
+          name: command.name,
+          mint: result.mint,
+          signature: result.signature,
+        });
+        res.json({
+          success: true,
+          mint: result.mint,
+          signature: result.signature,
+          pumpfun: `https://pump.fun/${result.mint}`,
+        });
+      } catch (err: any) {
+        console.error('Auto-deploy failed:', err);
+        res.status(500).json({ error: getErrorMessage(err) });
+      }
+    }
+  );
+
   // Get created tokens
   router.get('/tokens', authMiddleware(false), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     const limit = parseInt(req.query.limit as string) || 50;
@@ -745,13 +796,13 @@ export function createApiRoutes(
     }
 
     try {
-      const { text, tweetId, authorUsername, urls, mediaUrls } = req.body;
+      const { text, tweetId, authorUsername, urls, mediaUrls, authorName, authorFollowers, authorVerified, websiteUrls } = req.body;
 
       if (!text) {
         return res.status(400).json({ error: 'Tweet text is required' });
       }
 
-      // Create TweetData object for Groq service
+      // Create TweetData object for Groq service with enriched metadata
       const tweetData = {
         id: tweetId || 'unknown',
         text,
@@ -778,6 +829,13 @@ export function createApiRoutes(
           avatarUrl: cmd.avatarUrl,
         })),
         count: suggestions.length,
+        metadata: {
+          authorName,
+          authorFollowers,
+          authorVerified,
+          websiteUrls,
+          hasWebsite: websiteUrls && websiteUrls.length > 0,
+        },
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';

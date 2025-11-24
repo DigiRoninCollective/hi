@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   MessageSquare,
   Rocket,
@@ -13,6 +14,8 @@ import {
   Twitter,
   RefreshCw,
   Loader2,
+  Shield,
+  ArrowLeft,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
@@ -124,6 +127,7 @@ const demoEvents: FeedEvent[] = [
 ]
 
 export default function FeedPage() {
+  const navigate = useNavigate()
   const { isAuthenticated } = useAuth()
   const [events, setEvents] = useState<FeedEvent[]>([])
   const [connected, setConnected] = useState(false)
@@ -160,6 +164,17 @@ export default function FeedPage() {
   const [groqSuggestions, setGroqSuggestions] = useState<Record<string, GroqSuggestion[]>>({})
   const [loadingSuggestions, setLoadingSuggestions] = useState<Record<string, boolean>>({})
   const { user } = useAuth()
+  const [poolKeys, setPoolKeys] = useState<{ id: string; public_key: string; created_at: string }[]>([])
+  const [poolLoading, setPoolLoading] = useState(false)
+  const [poolCount, setPoolCount] = useState(5)
+  const [keywordTemplates, setKeywordTemplates] = useState<string[]>([
+    'World Record',
+    'Cute Animal',
+    'Epic Story',
+    'Speedrun',
+    'Record Breaker',
+  ])
+  const [customKeyword, setCustomKeyword] = useState('')
 
   const feedRef = useRef<HTMLDivElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
@@ -191,7 +206,10 @@ export default function FeedPage() {
     if (isAuthenticated) {
       loadPrefs()
     }
-  }, [isAuthenticated])
+    if (isAuthenticated && user?.role === 'admin') {
+      loadPool()
+    }
+  }, [isAuthenticated, user?.role])
 
   const loadWatchedAccounts = async () => {
     try {
@@ -335,6 +353,45 @@ export default function FeedPage() {
     } finally {
       setSavingPrefs(false)
       setShowPrefs(false)
+    }
+  }
+
+  const loadPool = async () => {
+    if (user?.role !== 'admin') return
+    setPoolLoading(true)
+    try {
+      const res = await fetch('/api/auth/wallet-pool', { credentials: 'include' })
+      if (res.ok) {
+        const data = await res.json()
+        setPoolKeys(data || [])
+      }
+    } catch (err) {
+      console.error('Failed to load wallet pool', err)
+    } finally {
+      setPoolLoading(false)
+    }
+  }
+
+  const regeneratePool = async () => {
+    if (user?.role !== 'admin') {
+      alert('S-tier required to generate pool')
+      return
+    }
+    setPoolLoading(true)
+    try {
+      const res = await fetch('/api/auth/wallet-pool/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ count: poolCount }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to generate pool')
+      setPoolKeys(data || [])
+    } catch (err: any) {
+      alert(err.message || 'Failed to generate pool')
+    } finally {
+      setPoolLoading(false)
     }
   }
 
@@ -598,6 +655,34 @@ export default function FeedPage() {
     }
   }
 
+  const triggerAutoDeploy = async (event: FeedEvent, keyword: string) => {
+    if (!isAuthenticated) {
+      alert('Login required')
+      return
+    }
+    setActionLoading(event.id)
+    try {
+      const res = await fetch('/api/actions/auto-deploy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          keyword,
+          tweetText: event.data?.text || event.data?.tweetText || '',
+          tweetAuthor: event.data?.authorUsername,
+          tweetId: event.data?.tweetId,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Auto deploy failed')
+      alert(`Auto-deployed (${keyword}). Mint: ${data.mint}`)
+    } catch (err: any) {
+      alert(err.message || 'Auto deploy failed')
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
   const analyzeWithGroq = async (event: FeedEvent) => {
     if (event.type !== 'tweet_received') return
 
@@ -605,6 +690,20 @@ export default function FeedPage() {
     setLoadingSuggestions(prev => ({ ...prev, [eventId]: true }))
 
     try {
+      // Extract enriched metadata from event data
+      const urls = event.data.urls || []
+      const mediaUrls = event.data.mediaUrls || []
+
+      // Filter out twitter domain URLs to identify external website links
+      const websiteUrls = urls.filter((url: string) => {
+        try {
+          const domain = new URL(url).hostname.toLowerCase()
+          return !domain.includes('twitter.com') && !domain.includes('x.com') && !domain.includes('t.co')
+        } catch {
+          return false
+        }
+      })
+
       const res = await fetch('/api/groq/suggest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -612,6 +711,12 @@ export default function FeedPage() {
           text: event.data.text,
           tweetId: event.data.tweetId,
           authorUsername: event.data.authorUsername,
+          urls,
+          mediaUrls,
+          websiteUrls,
+          authorName: event.data.authorName,
+          authorFollowers: event.data.authorFollowers,
+          authorVerified: event.data.authorVerified,
         }),
       })
 
@@ -692,6 +797,13 @@ export default function FeedPage() {
         {/* Feed Header */}
         <div className="flex items-center justify-between p-4 border-b border-dark-600">
           <h2 className="font-semibold flex items-center gap-2">
+            <button
+              onClick={() => navigate(-1)}
+              className="p-2 hover:bg-dark-700 rounded-lg transition-colors"
+              title="Go back"
+            >
+              <ArrowLeft className="w-5 h-5 text-gray-400 hover:text-white" />
+            </button>
             <MessageSquare className="w-5 h-5 text-accent-green" />
             Live Feed
             <span className="text-sm text-gray-500">({filteredEvents.length} events)</span>
@@ -833,6 +945,33 @@ export default function FeedPage() {
                       </a>
                     )}
 
+                    {/* Tweet metadata */}
+                    {event.type === 'tweet_received' && (
+                      <div className="mt-2 space-y-1 text-xs text-gray-400 border-t border-dark-600 pt-2">
+                        {event.data.authorFollowers && (
+                          <div className="flex items-center gap-1">
+                            <span className="text-gray-500">👥</span>
+                            <span>
+                              {event.data.authorFollowers.toLocaleString()} followers
+                              {event.data.authorVerified && <span className="text-blue-400 ml-1">✓</span>}
+                            </span>
+                          </div>
+                        )}
+                        {event.data.mediaUrls && event.data.mediaUrls.length > 0 && (
+                          <div className="flex items-center gap-1">
+                            <span>📷</span>
+                            <span>{event.data.mediaUrls.length} image{event.data.mediaUrls.length > 1 ? 's' : ''}</span>
+                          </div>
+                        )}
+                        {event.data.urls && event.data.urls.length > 0 && (
+                          <div className="flex items-center gap-1">
+                            <span>🔗</span>
+                            <span>{event.data.urls.length} link{event.data.urls.length > 1 ? 's' : ''}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Quick actions */}
                     {(event.type === 'tweet_received' ||
                       event.type === 'launch_detected' ||
@@ -907,6 +1046,22 @@ export default function FeedPage() {
                         >
                           Auto Sell (multi)
                         </button>
+                      </div>
+                    )}
+
+                    {/* Keyword templates for auto-deploy */}
+                    {(event.type === 'tweet_received' || event.type === 'tweet_classified') && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {keywordTemplates.map((k) => (
+                          <button
+                            key={k}
+                            disabled={actionLoading === event.id}
+                            onClick={() => triggerAutoDeploy(event, k)}
+                            className="px-3 py-1 rounded-full bg-dark-600 text-gray-200 border border-dark-500 hover:bg-dark-500 text-xs disabled:opacity-50"
+                          >
+                            {k}
+                          </button>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -1011,6 +1166,11 @@ export default function FeedPage() {
                     </label>
                   </div>
                 </div>
+                {user?.role !== 'admin' && (
+                  <div className="text-xs text-yellow-400 bg-yellow-400/10 border border-yellow-400/30 rounded-lg px-3 py-2 mb-3 flex items-center gap-2">
+                    <Shield className="w-3 h-3" /> S-tier (admin) required for multi-wallet actions.
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs text-gray-400 mb-1 block">Wallets to use</label>
@@ -1055,6 +1215,46 @@ export default function FeedPage() {
                     />
                   </div>
                 </div>
+                <div className="mt-4 bg-dark-700 border border-dark-600 rounded-lg p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold">Auto-deploy keywords</p>
+                      <p className="text-xs text-gray-500">Templates used on tweet cards.</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={customKeyword}
+                        onChange={(e) => setCustomKeyword(e.target.value)}
+                        placeholder="Add keyword"
+                        className="text-sm w-36"
+                      />
+                      <button
+                        onClick={() => {
+                          const k = customKeyword.trim()
+                          if (!k) return
+                          setKeywordTemplates((prev) =>
+                            prev.includes(k) ? prev : [...prev, k].slice(-10)
+                          )
+                          setCustomKeyword('')
+                        }}
+                        className="px-3 py-2 bg-dark-600 text-gray-100 rounded-lg text-xs hover:bg-dark-500"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    {keywordTemplates.map((k) => (
+                      <span
+                        key={k}
+                        className="px-2 py-1 rounded-full bg-dark-600 border border-dark-500 text-gray-200"
+                      >
+                        {k}
+                      </span>
+                    ))}
+                  </div>
+                </div>
                 <div className="mt-3 grid grid-cols-2 gap-3">
                   <label className="flex items-center gap-2 text-sm">
                     <input
@@ -1097,6 +1297,49 @@ export default function FeedPage() {
                     />
                   </div>
                 </div>
+                {user?.role === 'admin' && (
+                  <div className="mt-4 bg-dark-700 border border-dark-600 rounded-lg p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-semibold">Wallet pool</p>
+                        <p className="text-xs text-gray-500">Generate unlinkable wallets server-side.</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={1}
+                          max={20}
+                          value={poolCount}
+                          onChange={(e) => setPoolCount(parseInt(e.target.value || '1', 10))}
+                          className="w-20 text-sm"
+                        />
+                        <button
+                          onClick={regeneratePool}
+                          disabled={poolLoading}
+                          className="px-3 py-2 bg-accent-green text-dark-900 rounded-lg text-sm font-semibold hover:bg-green-400 disabled:opacity-50"
+                        >
+                          {poolLoading ? 'Working...' : 'Generate'}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="text-xs text-gray-400 space-y-1 max-h-24 overflow-auto">
+                      {poolLoading ? (
+                        <p>Loading pool...</p>
+                      ) : poolKeys.length === 0 ? (
+                        <p>No wallets yet.</p>
+                      ) : (
+                        poolKeys.map((w) => (
+                          <div key={w.id} className="flex items-center justify-between">
+                            <span className="font-mono text-[11px]">{w.public_key}</span>
+                            <span className="text-[10px] text-gray-500">
+                              {new Date(w.created_at).toLocaleDateString()}
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
