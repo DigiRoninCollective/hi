@@ -60,6 +60,20 @@ async function checkEnvironment(): Promise<{ ready: boolean; issues: string[] }>
     if (envContent.includes('SOLANA_RPC_URL=https://api.mainnet-beta.solana.com')) {
       issues.push('Using public RPC (recommend Helius/QuickNode for production)');
     }
+
+    if (envContent.includes('SOLANA_RPC_URL=https://api.devnet.solana.com')) {
+      issues.push('Using devnet RPC (testing mode; recommend mainnet for production)');
+    }
+
+    const twitterEnabled = getEnvBool('TWITTER_ENABLED', true);
+    const hasTwitterCreds =
+      envContent.includes('TWITTER_API_KEY=') &&
+      envContent.includes('TWITTER_API_SECRET=') &&
+      envContent.includes('TWITTER_BEARER_TOKEN=');
+
+    if (twitterEnabled && !hasTwitterCreds) {
+      issues.push('Twitter enabled but credentials missing (set TWITTER_ENABLED=false to skip)');
+    }
   }
 
   // Check node_modules
@@ -94,6 +108,22 @@ function getEnvValue(key: string): string | null {
   const envContent = fs.readFileSync('.env', 'utf-8');
   const match = envContent.match(new RegExp(`${key}=(\\S*)`));
   return match ? match[1] : null;
+}
+
+function getEnvBool(key: string, defaultValue = false): boolean {
+  const value = getEnvValue(key);
+  if (!value) return defaultValue;
+  return ['true', '1', 'yes', 'y'].includes(value.toLowerCase());
+}
+
+function setRpcForNetwork(network: 'mainnet' | 'devnet') {
+  if (network === 'mainnet') {
+    updateEnvValue('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com');
+    updateEnvValue('SOLANA_WS_URL', 'wss://api.mainnet-beta.solana.com');
+  } else {
+    updateEnvValue('SOLANA_RPC_URL', 'https://api.devnet.solana.com');
+    updateEnvValue('SOLANA_WS_URL', 'wss://api.devnet.solana.com');
+  }
 }
 
 async function setupWizard() {
@@ -237,29 +267,47 @@ async function configureWallet() {
 }
 
 async function configureRpc() {
-  console.log('   Recommended RPC Providers:');
-  console.log('   1. Helius (helius.dev) - Best for Solana, free tier');
-  console.log('   2. QuickNode (quicknode.com) - Reliable');
-  console.log('   3. Triton (triton.one) - Fast');
-  console.log('   4. Shyft (shyft.to) - Good free tier');
-  console.log('   5. Public (slow, not recommended)\n');
+  console.log('   Select network and RPC:');
+  console.log('   1. Mainnet (default) - https://api.mainnet-beta.solana.com');
+  console.log('   2. Devnet (testing) - https://api.devnet.solana.com');
+  console.log('   3. Custom RPC URL');
+  console.log('   4. Providers: Helius, QuickNode, Triton, Shyft (enter custom URL)\n');
 
   const currentRpc = getEnvValue('SOLANA_RPC_URL');
   if (currentRpc) {
     console.log(`   Current: ${currentRpc.substring(0, 50)}...\n`);
   }
 
-  const choice = await prompt('   Enter RPC URL or [S]kip: ');
-  if (choice && choice.toLowerCase() !== 's') {
-    updateEnvValue('SOLANA_RPC_URL', choice);
+  const choice = await prompt('   Choose (1=mainnet, 2=devnet, 3=custom, [S]kip): ');
 
-    // Also set WebSocket URL if it's a Helius URL
-    if (choice.includes('helius')) {
-      const wsUrl = choice.replace('https://', 'wss://');
-      updateEnvValue('SOLANA_WS_URL', wsUrl);
-      console.log('   ✅ RPC & WebSocket URLs saved\n');
+  if (!choice || choice.toLowerCase() === 's') {
+    console.log('   ⏭️  Skipped\n');
+    return;
+  }
+
+  if (choice === '1') {
+    setRpcForNetwork('mainnet');
+    console.log('   ✅ Mainnet RPC set\n');
+    return;
+  }
+
+  if (choice === '2') {
+    setRpcForNetwork('devnet');
+    console.log('   ✅ Devnet RPC set (testing mode)\n');
+    return;
+  }
+
+  if (choice === '3') {
+    const custom = await prompt('   Enter RPC URL: ');
+    if (custom) {
+      updateEnvValue('SOLANA_RPC_URL', custom);
+      if (custom.startsWith('https://')) {
+        const wsUrl = custom.replace('https://', 'wss://');
+        updateEnvValue('SOLANA_WS_URL', wsUrl);
+      }
+      console.log('   ✅ Custom RPC saved\n');
     } else {
-      console.log('   ✅ RPC URL saved\n');
+      console.log('   ⏭️  Skipped\n');
     }
   }
 }
@@ -293,11 +341,24 @@ async function configureTwitter() {
   console.log('   Create an app at developer.twitter.com');
   console.log('   You\'ll need API Key, Secret, and Bearer Token.\n');
 
+  const currentlyEnabled = getEnvBool('TWITTER_ENABLED', true);
+  console.log(`   Currently: ${currentlyEnabled ? 'ENABLED' : 'DISABLED'}`);
+
+  const disable = await prompt('   Disable Twitter streaming? (y/N): ');
+  if (disable.toLowerCase() === 'y') {
+    updateEnvValue('TWITTER_ENABLED', 'false');
+    console.log('   ⏭️  Twitter streaming disabled (set TWITTER_ENABLED=true to re-enable)\n');
+    return;
+  }
+
   const currentKey = getEnvValue('TWITTER_API_KEY');
   if (currentKey && currentKey !== 'your_api_key') {
     console.log('   ✅ Twitter credentials already configured\n');
     const change = await prompt('   Reconfigure? (y/N): ');
-    if (change.toLowerCase() !== 'y') return;
+    if (change.toLowerCase() !== 'y') {
+      updateEnvValue('TWITTER_ENABLED', 'true');
+      return;
+    }
   }
 
   const apiKey = await prompt('   API Key or [S]kip: ');
@@ -316,7 +377,11 @@ async function configureTwitter() {
     const accessSecret = await prompt('   Access Secret (optional): ');
     if (accessSecret) updateEnvValue('TWITTER_ACCESS_SECRET', accessSecret);
 
-    console.log('   ✅ Twitter credentials saved\n');
+    updateEnvValue('TWITTER_ENABLED', 'true');
+    console.log('   ✅ Twitter credentials saved and streaming enabled\n');
+  } else {
+    updateEnvValue('TWITTER_ENABLED', 'false');
+    console.log('   ⏭️  Skipped; Twitter streaming disabled\n');
   }
 }
 
@@ -449,7 +514,8 @@ async function startBotService() {
     return;
   }
 
-  console.log('Starting main bot service (Telegram, Twitter monitoring)...\n');
+  const twitterEnabled = getEnvBool('TWITTER_ENABLED', true);
+  console.log(`Starting main bot service (${twitterEnabled ? 'Twitter enabled' : 'Twitter disabled'})...\n`);
 
   const bot = spawn('npx', ['ts-node', 'src/index.ts'], {
     stdio: 'inherit',

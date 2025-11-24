@@ -1,6 +1,41 @@
-import Snoowrap from 'snoowrap';
+import fetch from 'node-fetch';
 import { EventBus, EventType, eventBus } from './events';
 import { AlphaSignalInsert, AlphaSourceType } from './database.types';
+
+interface RedditListingChild<T> {
+  data: T;
+}
+
+interface RedditListingResponse<T> {
+  data?: {
+    children?: RedditListingChild<T>[];
+  };
+}
+
+interface RedditPostApi {
+  id: string;
+  title: string;
+  selftext?: string;
+  author?: { name?: string };
+  subreddit?: { display_name?: string };
+  score: number;
+  upvote_ratio: number;
+  num_comments: number;
+  created_utc: number;
+  url: string;
+  permalink: string;
+  is_video: boolean;
+  is_self: boolean;
+  thumbnail?: string;
+  link_flair_text?: string;
+  total_awards_received?: number;
+}
+
+interface RedditMeResponse {
+  name: string;
+  link_karma: number;
+  comment_karma: number;
+}
 
 export interface RedditConfig {
   clientId?: string;
@@ -49,7 +84,8 @@ export interface RedditCommentData {
  * Reddit monitoring service for alpha signal aggregation
  */
 export class RedditService {
-  private reddit: Snoowrap | null = null;
+  private accessToken: string | null = null;
+  private tokenExpiresAt = 0;
   private config: RedditConfig;
   private eventBus: EventBus;
   private watchedSubreddits: Set<string>;
@@ -58,6 +94,45 @@ export class RedditService {
   private seenPostIds: Set<string> = new Set();
   private onPostHandler: ((post: RedditPostData) => Promise<void>) | null = null;
   private onCommentHandler: ((comment: RedditCommentData) => Promise<void>) | null = null;
+
+  private async ensureToken(): Promise<void> {
+    const now = Date.now();
+    if (this.accessToken && now < this.tokenExpiresAt - 60_000) {
+      return;
+    }
+
+    if (!this.config.clientId || !this.config.clientSecret || !this.config.username || !this.config.password) {
+      console.warn('[Reddit] Missing credentials; cannot fetch access token');
+      this.accessToken = null;
+      return;
+    }
+
+    const body = new URLSearchParams({
+      grant_type: 'password',
+      username: this.config.username,
+      password: this.config.password,
+    });
+
+    const resp = await fetch('https://www.reddit.com/api/v1/access_token', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Basic ' + Buffer.from(`${this.config.clientId}:${this.config.clientSecret}`).toString('base64'),
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': this.config.userAgent || 'AlphaAggregator/1.0.0',
+      },
+      body,
+    });
+
+    if (!resp.ok) {
+      console.error('[Reddit] Failed to obtain access token:', resp.status, await resp.text());
+      this.accessToken = null;
+      return;
+    }
+
+    const json = await resp.json() as { access_token?: string; expires_in?: number };
+    this.accessToken = json.access_token || null;
+    this.tokenExpiresAt = now + (json.expires_in ? json.expires_in * 1000 : 3600_000);
+  }
 
   constructor(config: RedditConfig, bus: EventBus = eventBus) {
     this.config = config;
@@ -109,13 +184,27 @@ export class RedditService {
    * Fetch new posts from watched subreddits
    */
   private async fetchNewPosts(): Promise<void> {
-    if (!this.reddit || this.watchedSubreddits.size === 0) return;
+    if (this.watchedSubreddits.size === 0) return;
+    await this.ensureToken();
+    if (!this.accessToken) return;
 
     try {
       // Combine all watched subreddits into one query
       const subredditStr = Array.from(this.watchedSubreddits).join('+');
 
-      const posts = await this.reddit.getSubreddit(subredditStr).getNew({ limit: 25 });
+      const resp = await fetch(`https://oauth.reddit.com/r/${subredditStr}/new?limit=25`, {
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          'User-Agent': this.config.userAgent || 'AlphaAggregator/1.0.0',
+        },
+      });
+
+      if (!resp.ok) {
+        throw new Error(`Reddit API error: ${resp.status} ${await resp.text()}`);
+      }
+
+      const json = await resp.json() as RedditListingResponse<RedditPostApi>;
+      const posts = (json?.data?.children || []).map((c: RedditListingChild<RedditPostApi>) => c.data);
 
       for (const post of posts) {
         // Skip already seen posts
@@ -245,31 +334,16 @@ export class RedditService {
     console.log('[Reddit] Starting Reddit service...');
 
     try {
-      // Create Snoowrap instance
-      this.reddit = new Snoowrap({
-        userAgent: this.config.userAgent || 'AlphaAggregator/1.0.0',
-        clientId: this.config.clientId,
-        clientSecret: this.config.clientSecret,
-        username: this.config.username,
-        password: this.config.password,
-      });
+      await this.ensureToken();
 
-      // Configure rate limiting
-      this.reddit.config({
-        requestDelay: 1000, // 1 request per second
-        continueAfterRatelimitError: true,
-        maxRetryAttempts: 3,
-      });
-
-      // Test connection
-      const me = await (this.reddit as any).getMe();
-      console.log(`[Reddit] Logged in as u/${me.name}`);
+      const me = await this.getAccountInfo();
+      console.log(`[Reddit] Logged in as u/${me?.username || 'unknown'}`);
 
       this.isRunning = true;
 
       this.eventBus.emit(EventType.ALERT_SUCCESS, {
         title: 'Reddit Connected',
-        message: `Logged in as u/${me.name}`,
+        message: `Logged in as u/${me?.username || 'unknown'}`,
       });
 
       // Start polling for new posts
@@ -304,7 +378,8 @@ export class RedditService {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
     }
-    this.reddit = null;
+    this.accessToken = null;
+    this.tokenExpiresAt = 0;
     this.isRunning = false;
     console.log('[Reddit] Service stopped');
   }
@@ -320,9 +395,21 @@ export class RedditService {
    * Get account info
    */
   async getAccountInfo(): Promise<{ username: string; karma: number } | null> {
-    if (!this.reddit) return null;
+    await this.ensureToken();
+    if (!this.accessToken) return null;
     try {
-      const me = await (this.reddit as any).getMe();
+      const resp = await fetch('https://oauth.reddit.com/api/v1/me', {
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          'User-Agent': this.config.userAgent || 'AlphaAggregator/1.0.0',
+        },
+      });
+
+      if (!resp.ok) {
+        throw new Error(`Reddit API error: ${resp.status} ${await resp.text()}`);
+      }
+
+      const me = await resp.json() as RedditMeResponse;
       return {
         username: me.name,
         karma: me.link_karma + me.comment_karma,
@@ -341,17 +428,33 @@ export class RedditService {
     query: string,
     options: { limit?: number; sort?: 'relevance' | 'new' | 'hot' | 'top' } = {}
   ): Promise<RedditPostData[]> {
-    if (!this.reddit) return [];
+    await this.ensureToken();
+    if (!this.accessToken) return [];
 
     try {
-      const posts = await (this.reddit as any).getSubreddit(subreddit).search({
-        query,
-        limit: options.limit || 25,
+      const params = new URLSearchParams({
+        q: query,
+        limit: String(options.limit || 25),
         sort: options.sort || 'new',
-        time: 'day',
-      } as any);
+        t: 'day',
+        type: 'link',
+      });
 
-      return posts.map((post: any) => ({
+      const resp = await fetch(`https://oauth.reddit.com/r/${subreddit}/search?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          'User-Agent': this.config.userAgent || 'AlphaAggregator/1.0.0',
+        },
+      });
+
+      if (!resp.ok) {
+        throw new Error(`Reddit API error: ${resp.status} ${await resp.text()}`);
+      }
+
+      const json = await resp.json() as RedditListingResponse<RedditPostApi>;
+      const posts = (json?.data?.children || []).map((c: RedditListingChild<RedditPostApi>) => c.data);
+
+      return posts.map((post: RedditPostApi) => ({
         id: post.id,
         title: post.title,
         content: post.selftext || '',

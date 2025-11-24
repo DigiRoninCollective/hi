@@ -144,7 +144,7 @@ export class TwitterStreamService {
     console.log(`  "${tweetData.text.substring(0, 100)}${tweetData.text.length > 100 ? '...' : ''}"`);
 
     // Parse the tweet for launch commands
-    const { parseLaunchCommand } = await import('./parser');
+    const { parseLaunchCommand } = await import('./parser.js');
     const commands: any[] = [];
 
     const parsed = parseLaunchCommand(tweetData);

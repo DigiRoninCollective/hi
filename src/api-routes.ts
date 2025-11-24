@@ -3,7 +3,7 @@ import multer from 'multer';
 import fetch from 'node-fetch';
 import { PumpPortalService } from './pumpportal';
 import { EventBus, EventType } from './events';
-import { ParsedLaunchCommand } from './types';
+import { ParsedLaunchCommand, getErrorMessage } from './types';
 import { ZkMixerService, ZkProofRequest } from './zk-mixer.service';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs';
@@ -20,6 +20,16 @@ import {
   getTweets,
 } from './database.service';
 import { authMiddleware, AuthenticatedRequest } from './auth.service';
+import {
+  createTokenLimiter,
+  buyTokenLimiter,
+  sellTokenLimiter,
+  validateRequest,
+  CreateTokenSchema,
+  BuyTokenSchema,
+  SellTokenSchema,
+  formatErrorResponse,
+} from './security.middleware';
 
 // Fallback in-memory storage (when Supabase is not configured)
 interface CreatedToken {
@@ -68,7 +78,7 @@ export function createApiRoutes(
   const router = Router();
 
   // Get wallet info
-  router.get('/wallet', async (req: Request, res: Response) => {
+  router.get('/wallet', async (req: Request, res: Response): Promise<Response | void> => {
     if (!pumpPortal) {
       return res.status(503).json({ error: 'PumpPortal service not initialized' });
     }
@@ -84,8 +94,14 @@ export function createApiRoutes(
     }
   });
 
-  // Create token (with optional auth)
-  router.post('/tokens/create', upload.single('image'), authMiddleware(false), async (req: AuthenticatedRequest, res: Response) => {
+  // Create token (with rate limiting and validation)
+  router.post(
+    '/tokens/create',
+    createTokenLimiter,
+    upload.single('image'),
+    authMiddleware(false),
+    validateRequest(CreateTokenSchema),
+    async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     if (!verifyApiKey(req, res)) return;
     if (!pumpPortal) {
       return res.status(503).json({ error: 'PumpPortal service not initialized' });
@@ -300,10 +316,11 @@ export function createApiRoutes(
 
       res.status(500).json({ error: errorMessage });
     }
-  });
+    }
+  );
 
   // Get created tokens
-  router.get('/tokens', authMiddleware(false), async (req: AuthenticatedRequest, res: Response) => {
+  router.get('/tokens', authMiddleware(false), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     const limit = parseInt(req.query.limit as string) || 50;
     const offset = parseInt(req.query.offset as string) || 0;
 
@@ -325,7 +342,7 @@ export function createApiRoutes(
   });
 
   // Get token by mint
-  router.get('/tokens/:mint', async (req: Request, res: Response) => {
+  router.get('/tokens/:mint', async (req: Request, res: Response): Promise<Response | void> => {
     if (useSupabase) {
       const token = await getTokenByMint(req.params.mint);
       if (!token) {
@@ -342,7 +359,12 @@ export function createApiRoutes(
   });
 
   // Buy token
-  router.post('/tokens/:mint/buy', authMiddleware(false), async (req: AuthenticatedRequest, res: Response) => {
+  router.post(
+    '/tokens/:mint/buy',
+    buyTokenLimiter,
+    authMiddleware(true),
+    validateRequest(BuyTokenSchema),
+    async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     if (!pumpPortal) {
       return res.status(503).json({ error: 'PumpPortal service not initialized' });
     }
@@ -387,10 +409,16 @@ export function createApiRoutes(
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       res.status(500).json({ error: errorMessage });
     }
-  });
+    }
+  );
 
   // Sell token
-  router.post('/tokens/:mint/sell', authMiddleware(false), async (req: AuthenticatedRequest, res: Response) => {
+  router.post(
+    '/tokens/:mint/sell',
+    sellTokenLimiter,
+    authMiddleware(true),
+    validateRequest(SellTokenSchema),
+    async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     if (!pumpPortal) {
       return res.status(503).json({ error: 'PumpPortal service not initialized' });
     }
@@ -435,10 +463,11 @@ export function createApiRoutes(
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       res.status(500).json({ error: errorMessage });
     }
-  });
+    }
+  );
 
   // Image upload endpoint (base64)
-  router.post('/upload/image', (req: Request, res: Response) => {
+  router.post('/upload/image', (req: Request, res: Response): Response | void => {
     try {
       const { image, filename } = req.body;
 
@@ -473,7 +502,7 @@ export function createApiRoutes(
   });
 
   // Get system status
-  router.get('/status', async (req: Request, res: Response) => {
+  router.get('/status', async (req: Request, res: Response): Promise<Response | void> => {
     const walletInfo = pumpPortal
       ? {
           address: pumpPortal.getWalletAddress(),
@@ -499,7 +528,7 @@ export function createApiRoutes(
   });
 
   // Get tweets (stored in database)
-  router.get('/tweets', async (req: Request, res: Response) => {
+  router.get('/tweets', async (req: Request, res: Response): Promise<Response | void> => {
     if (!useSupabase) {
       return res.json({ tweets: [], total: 0, message: 'Supabase not configured' });
     }

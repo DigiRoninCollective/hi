@@ -3,19 +3,19 @@ import { ClassificationResult, EventBus, EventType } from './events';
 import { parseLaunchCommand } from './parser';
 
 // Keywords that indicate a launch command
-const LAUNCH_KEYWORDS = [
+const LAUNCH_KEYWORDS: string[] = [
   'launch', 'launching', 'deploy', 'deploying', 'mint', 'minting',
   'create', 'creating', 'drop', 'dropping', 'release', 'releasing',
 ];
 
 // Spam indicators
-const SPAM_INDICATORS = [
+const SPAM_INDICATORS: string[] = [
   'giveaway', 'airdrop', 'free', 'claim', 'click here', 'dm me',
   'send sol', 'double', '100x', '1000x', 'guaranteed', 'scam',
 ];
 
 // High-risk patterns
-const RISK_PATTERNS = [
+const RISK_PATTERNS: RegExp[] = [
   /send\s+\d+\s*sol/i,
   /click\s+(here|link)/i,
   /dm\s+(me|us)/i,

@@ -1,35 +1,8 @@
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const TelegramBot = require('node-telegram-bot-api');
+import TelegramBot, { Message as TelegramRawMessage, CallbackQuery as TelegramCallbackQuery, InlineKeyboardButton as TelegramInlineKeyboardButton, InlineKeyboardMarkup as TelegramInlineKeyboardMarkup } from 'node-telegram-bot-api';
 
-// Type definitions from node-telegram-bot-api
-interface InlineKeyboardButton {
-  text: string;
-  callback_data?: string;
-  url?: string;
-}
-
-interface InlineKeyboardMarkup {
-  inline_keyboard: InlineKeyboardButton[][];
-}
-
-interface CallbackQuery {
-  id: string;
-  from: {
-    id: number;
-    is_bot: boolean;
-    first_name: string;
-    username?: string;
-    language_code?: string;
-  };
-  message?: {
-    message_id: number;
-    chat: {
-      id: number;
-      type: string;
-    };
-  };
-  data?: string;
-}
+type InlineKeyboardButton = TelegramInlineKeyboardButton;
+type InlineKeyboardMarkup = TelegramInlineKeyboardMarkup;
+type CallbackQuery = TelegramCallbackQuery;
 
 // Message type from Telegram
 interface TelegramMessage {
@@ -227,18 +200,18 @@ export class TelegramService {
     ]);
 
     // Register command handlers
-    this.bot.onText(/\/start/, (msg: TelegramMessage) => this.handleStartCommand(msg));
-    this.bot.onText(/\/help/, (msg: TelegramMessage) => this.handleHelpCommand(msg));
-    this.bot.onText(/\/status/, (msg: TelegramMessage) => this.handleStatusCommand(msg));
-    this.bot.onText(/\/subscribe/, (msg: TelegramMessage) => this.handleSubscribeCommand(msg));
-    this.bot.onText(/\/unsubscribe/, (msg: TelegramMessage) => this.handleUnsubscribeCommand(msg));
-    this.bot.onText(/\/settings/, (msg: TelegramMessage) => this.handleSettingsCommand(msg));
-    this.bot.onText(/\/launch(.*)/, (msg: TelegramMessage, match: string[] | null) =>
+    this.bot.onText(/\/start/, (msg: TelegramMessage): Promise<void> => this.handleStartCommand(msg));
+    this.bot.onText(/\/help/, (msg: TelegramMessage): Promise<void> => this.handleHelpCommand(msg));
+    this.bot.onText(/\/status/, (msg: TelegramMessage): Promise<void> => this.handleStatusCommand(msg));
+    this.bot.onText(/\/subscribe/, (msg: TelegramMessage): Promise<void> => this.handleSubscribeCommand(msg));
+    this.bot.onText(/\/unsubscribe/, (msg: TelegramMessage): Promise<void> => this.handleUnsubscribeCommand(msg));
+    this.bot.onText(/\/settings/, (msg: TelegramMessage): Promise<void> => this.handleSettingsCommand(msg));
+    this.bot.onText(/\/launch(.*)/, (msg: TelegramMessage, match: string[] | null): Promise<void> =>
       this.handleLaunchCommand(msg, match?.[1] || '')
     );
 
     // Register callback query handler for buttons
-    this.bot.on('callback_query', (query: CallbackQuery) => this.handleCallbackQuery(query));
+    this.bot.on('callback_query', (query: CallbackQuery): Promise<void> => this.handleCallbackQuery(query));
   }
 
   /**
@@ -710,7 +683,12 @@ ${statusEmoji} Service: ${this.isRunning ? 'Online' : 'Offline'}
     }
   }
 
-  private async launchTokenFromTelegram(input: { name: string; symbol: string; description: string; chatId: string }): Promise<void> {
+  private async launchTokenFromTelegram(input: {
+    name: string;
+    symbol: string;
+    description: string;
+    chatId: string;
+  }): Promise<void> {
     const url = this.launchApiUrl || 'http://localhost:3000/api/tokens/create';
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',

@@ -1,6 +1,7 @@
 import { Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
 import HomePage from './pages/HomePage'
+import ControlCenterPage from './pages/ControlCenterPage'
 import TokenDeployPage from './pages/TokenDeployPage'
 import FeedPage from './pages/FeedPage'
 import AlphaFeedPage from './pages/AlphaFeedPage'
@@ -18,6 +19,7 @@ function App() {
       {/* Main app with layout */}
       <Route path="/" element={<Layout />}>
         <Route index element={<HomePage />} />
+        <Route path="control" element={<ControlCenterPage />} />
         <Route path="deploy" element={<TokenDeployPage />} />
         <Route path="feed" element={<FeedPage />} />
         <Route path="alpha" element={<AlphaFeedPage />} />

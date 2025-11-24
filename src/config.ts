@@ -9,6 +9,7 @@ import { TelegramConfig } from './telegram.service';
 import { RedditConfig } from './reddit.service';
 import { BundlerConfig } from './bundler.service';
 import { GroqConfig, ZkMixerConfig } from './types';
+import { PumpPortalDataConfig } from './types';
 import path from 'path';
 
 dotenv.config();
@@ -61,6 +62,7 @@ export interface FullConfig extends Config {
   bundler: BundlerConfig;
   groq: GroqConfig;
   zkMixer: ZkMixerConfig;
+  pumpPortalData: PumpPortalDataConfig;
 }
 
 export function loadConfig(): FullConfig {
@@ -101,6 +103,13 @@ export function loadConfig(): FullConfig {
     },
     pumpPortal: {
       apiKey: getEnvVar('PUMPPORTAL_API_KEY'),
+    },
+    pumpPortalData: {
+      enabled: getEnvBool('PUMPPORTAL_WS_ENABLED', false),
+      subscribeNewTokens: getEnvBool('PUMPPORTAL_WS_SUBSCRIBE_NEW_TOKENS', true),
+      tokenTradeMints: getEnvList('PUMPPORTAL_WS_TOKEN_MINTS'),
+      accountTradeWallets: getEnvList('PUMPPORTAL_WS_ACCOUNTS'),
+      subscribeMigration: getEnvBool('PUMPPORTAL_WS_SUBSCRIBE_MIGRATION', false),
     },
     tokenDefaults: {
       decimals: parseInt(getEnvVar('DEFAULT_TOKEN_DECIMALS', false) || '6', 10),

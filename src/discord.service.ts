@@ -1,4 +1,16 @@
-import { Client, GatewayIntentBits, Message, PartialMessage, TextChannel, Events } from 'discord.js';
+import {
+  Attachment,
+  Client,
+  Embed,
+  Events,
+  GatewayIntentBits,
+  Guild,
+  GuildBasedChannel,
+  Message,
+  MessageReaction,
+  PartialMessage,
+  TextChannel,
+} from 'discord.js';
 import { EventBus, EventType, eventBus } from './events';
 import { AlphaSignalInsert, AlphaSourceType } from './database.types';
 
@@ -90,7 +102,7 @@ export class DiscordService {
    */
   private setupEventHandlers(): void {
     // Ready event
-    this.client.on(Events.ClientReady, (client) => {
+    this.client.on(Events.ClientReady, (client: Client<true>): void => {
       console.log(`[Discord] Bot logged in as ${client.user.tag}`);
       this.isConnected = true;
 
@@ -101,31 +113,34 @@ export class DiscordService {
 
       // Log guilds the bot is in
       console.log(`[Discord] Connected to ${client.guilds.cache.size} guild(s)`);
-      client.guilds.cache.forEach((guild) => {
+      client.guilds.cache.forEach((guild: Guild): void => {
         console.log(`  - ${guild.name} (${guild.id})`);
       });
     });
 
     // Message create event
-    this.client.on(Events.MessageCreate, async (message) => {
+    this.client.on(Events.MessageCreate, async (message: Message): Promise<void> => {
       await this.handleMessage(message);
     });
 
     // Message update event (for edits)
-    this.client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
-      if (newMessage.partial) {
-        try {
-          await newMessage.fetch();
-        } catch (error) {
-          console.error('[Discord] Error fetching updated message:', error);
-          return;
+    this.client.on(
+      Events.MessageUpdate,
+      async (oldMessage: Message | PartialMessage, newMessage: Message | PartialMessage): Promise<void> => {
+        if (newMessage.partial) {
+          try {
+            await newMessage.fetch();
+          } catch (error) {
+            console.error('[Discord] Error fetching updated message:', error);
+            return;
+          }
         }
+        await this.handleMessage(newMessage as Message);
       }
-      await this.handleMessage(newMessage as Message);
-    });
+    );
 
     // Error handling
-    this.client.on(Events.Error, (error) => {
+    this.client.on(Events.Error, (error: Error): void => {
       console.error('[Discord] Client error:', error);
       this.eventBus.emit(EventType.SYSTEM_ERROR, {
         source: 'discord',
@@ -174,9 +189,11 @@ export class DiscordService {
       guildId: message.guildId,
       guildName: message.guild?.name || null,
       createdAt: message.createdAt || new Date(),
-      attachments: message.attachments?.map((a) => a.url) || [],
-      embeds: message.embeds?.map((e) => e.toJSON()) || [],
-      reactionCount: message.reactions?.cache.reduce((sum, r) => sum + (r.count || 0), 0) || 0,
+      attachments: message.attachments?.map((attachment: Attachment) => attachment.url) || [],
+      embeds: message.embeds?.map((embed: Embed) => embed.toJSON()) || [],
+      reactionCount:
+        message.reactions?.cache.reduce((sum: number, reaction: MessageReaction) => sum + (reaction.count || 0), 0) ||
+        0,
       replyCount: 0, // Discord doesn't provide this directly
     };
 
@@ -289,9 +306,9 @@ export class DiscordService {
   getAvailableChannels(): { guildId: string; guildName: string; channels: { id: string; name: string }[] }[] {
     const result: { guildId: string; guildName: string; channels: { id: string; name: string }[] }[] = [];
 
-    this.client.guilds.cache.forEach((guild) => {
+    this.client.guilds.cache.forEach((guild: Guild): void => {
       const channels: { id: string; name: string }[] = [];
-      guild.channels.cache.forEach((channel) => {
+      guild.channels.cache.forEach((channel: GuildBasedChannel): void => {
         if (channel instanceof TextChannel) {
           channels.push({ id: channel.id, name: channel.name });
         }

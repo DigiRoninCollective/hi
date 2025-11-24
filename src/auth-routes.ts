@@ -25,7 +25,7 @@ export function createAuthRoutes(): Router {
   const router = Router();
 
   // Register new user
-  router.post('/register', async (req: Request, res: Response) => {
+  router.post('/register', async (req: Request, res: Response): Promise<Response | void> => {
     const { username, password, email } = req.body;
 
     if (!username || !password) {
@@ -50,7 +50,7 @@ export function createAuthRoutes(): Router {
   });
 
   // Login
-  router.post('/login', async (req: Request, res: Response) => {
+  router.post('/login', async (req: Request, res: Response): Promise<Response | void> => {
     const { username, password } = req.body;
 
     if (!username || !password) {
@@ -87,7 +87,7 @@ export function createAuthRoutes(): Router {
   });
 
   // Logout
-  router.post('/logout', authMiddleware(false), async (req: AuthenticatedRequest, res: Response) => {
+  router.post('/logout', authMiddleware(false), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     const token = req.headers.authorization?.slice(7) || req.cookies?.session_token;
 
     if (token) {
@@ -99,7 +99,7 @@ export function createAuthRoutes(): Router {
   });
 
   // Get current user
-  router.get('/me', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.get('/me', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     res.json({
       user: {
         id: req.user!.id,
@@ -113,7 +113,7 @@ export function createAuthRoutes(): Router {
   });
 
   // Change password
-  router.post('/change-password', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.post('/change-password', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     const { currentPassword, newPassword } = req.body;
 
     if (!currentPassword || !newPassword) {
@@ -131,7 +131,7 @@ export function createAuthRoutes(): Router {
   });
 
   // Get user settings
-  router.get('/settings', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.get('/settings', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     const settings = await getUserSettings(req.user!.id);
 
     if (!settings) {
@@ -150,7 +150,7 @@ export function createAuthRoutes(): Router {
   });
 
   // Update user settings
-  router.put('/settings', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.put('/settings', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     const { color_theme, image_layout, card_width, pause_on_hover, sounds_enabled, notifications_enabled } = req.body;
 
     const settings = await upsertUserSettings(req.user!.id, {
@@ -170,12 +170,12 @@ export function createAuthRoutes(): Router {
   });
 
   // Watched Accounts
-  router.get('/watched-accounts', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.get('/watched-accounts', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     const accounts = await getWatchedAccounts(req.user!.id);
     res.json(accounts);
   });
 
-  router.post('/watched-accounts', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.post('/watched-accounts', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     const { twitter_username, twitter_user_id, display_name, avatar_url } = req.body;
 
     if (!twitter_username) {
@@ -197,7 +197,7 @@ export function createAuthRoutes(): Router {
     res.status(201).json(account);
   });
 
-  router.delete('/watched-accounts/:id', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.delete('/watched-accounts/:id', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     const success = await removeWatchedAccount(req.params.id, req.user!.id);
 
     if (!success) {
@@ -208,12 +208,12 @@ export function createAuthRoutes(): Router {
   });
 
   // Word Highlights
-  router.get('/word-highlights', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.get('/word-highlights', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     const highlights = await getWordHighlights(req.user!.id);
     res.json(highlights);
   });
 
-  router.post('/word-highlights', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.post('/word-highlights', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     const { word, color } = req.body;
 
     if (!word) {
@@ -233,7 +233,7 @@ export function createAuthRoutes(): Router {
     res.status(201).json(highlight);
   });
 
-  router.delete('/word-highlights/:id', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.delete('/word-highlights/:id', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     const success = await removeWordHighlight(req.params.id, req.user!.id);
 
     if (!success) {
@@ -244,12 +244,12 @@ export function createAuthRoutes(): Router {
   });
 
   // Contract Addresses
-  router.get('/contract-addresses', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.get('/contract-addresses', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     const addresses = await getContractAddresses(req.user!.id);
     res.json(addresses);
   });
 
-  router.post('/contract-addresses', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.post('/contract-addresses', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     const { address, label, chain } = req.body;
 
     if (!address) {
@@ -270,7 +270,7 @@ export function createAuthRoutes(): Router {
     res.status(201).json(contract);
   });
 
-  router.delete('/contract-addresses/:id', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.delete('/contract-addresses/:id', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     const success = await removeContractAddress(req.params.id, req.user!.id);
 
     if (!success) {

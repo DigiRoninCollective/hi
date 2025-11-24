@@ -6,6 +6,7 @@ export interface Config {
   tokenDefaults: TokenDefaults;
   groq: GroqConfig;
   zkMixer: ZkMixerConfig;
+  pumpPortalData: PumpPortalDataConfig;
 }
 
 export interface TwitterConfig {
@@ -26,6 +27,14 @@ export interface SolanaConfig {
 
 export interface PumpPortalConfig {
   apiKey: string;
+}
+
+export interface PumpPortalDataConfig {
+  enabled: boolean;
+  subscribeNewTokens: boolean;
+  tokenTradeMints: string[];
+  accountTradeWallets: string[];
+  subscribeMigration: boolean;
 }
 
 export interface TokenDefaults {
@@ -60,6 +69,7 @@ export interface ParsedLaunchCommand {
   avatarUrl?: string;
   website?: string;
   twitterHandle?: string;
+  contractAddress?: string; // Optional custom contract address
   tweetId: string;
   tweetAuthor: string;
   tweetText: string;

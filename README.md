@@ -42,18 +42,26 @@ cp .env.example .env
 
 | Variable | Description |
 |----------|-------------|
-| `TWITTER_API_KEY` | Twitter API key |
-| `TWITTER_API_SECRET` | Twitter API secret |
-| `TWITTER_ACCESS_TOKEN` | Twitter access token |
-| `TWITTER_ACCESS_SECRET` | Twitter access secret |
-| `TWITTER_BEARER_TOKEN` | Twitter bearer token |
+| `TWITTER_API_KEY` | Twitter API key (required when `TWITTER_ENABLED=true`) |
+| `TWITTER_API_SECRET` | Twitter API secret (required when `TWITTER_ENABLED=true`) |
+| `TWITTER_ACCESS_TOKEN` | Twitter access token (required when `TWITTER_ENABLED=true`) |
+| `TWITTER_ACCESS_SECRET` | Twitter access secret (required when `TWITTER_ENABLED=true`) |
+| `TWITTER_BEARER_TOKEN` | Twitter bearer token (required when `TWITTER_ENABLED=true`) |
 | `SOLANA_PRIVATE_KEY` | Base58 encoded Solana private key |
 | `PUMPPORTAL_API_KEY` | PumpPortal API key |
+| `PUMPPORTAL_WS_ENABLED` | false | Enable PumpPortal Data websocket |
+| `PUMPPORTAL_WS_SUBSCRIBE_NEW_TOKENS` | true | Subscribe to new token events |
+| `PUMPPORTAL_WS_TOKEN_MINTS` | - | Comma-separated mints to monitor trades |
+| `PUMPPORTAL_WS_ACCOUNTS` | - | Comma-separated accounts to monitor trades |
+| `PUMPPORTAL_WS_SUBSCRIBE_MIGRATION` | false | Subscribe to migration events |
+
+> Note: The Solana 1.x SDK (via PumpFun/Raydium/Jito deps) pulls `bigint-buffer` (GHSA-3gc7-fjrx-p6mg). No patched 1.x release exists yet; functional impact is low because web3 uses it on fixed-size fields. Upgrade when upstream publishes a fix.
 
 #### Optional
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `TWITTER_ENABLED` | true | Set to `false` to run without Twitter streaming (skips all Twitter API keys) |
 | `TWITTER_USERNAMES` | - | Comma-separated usernames to monitor |
 | `TWITTER_HASHTAGS` | - | Comma-separated hashtags to monitor |
 | `SOLANA_RPC_URL` | mainnet | Solana RPC endpoint |
@@ -64,6 +72,17 @@ cp .env.example .env
 | `CLASSIFIER_MIN_CONFIDENCE` | 0.6 | Minimum confidence to trigger launch |
 | `CLASSIFIER_MAX_RISK` | 0.7 | Maximum risk score allowed |
 | `TRUSTED_USERS` | - | Users that bypass risk checks |
+| `GROQ_ENABLED` | false | Enable Groq-powered tweet analysis for ticker/name suggestions |
+| `GROQ_API_KEY` | - | Groq API key (required when `GROQ_ENABLED=true`) |
+| `GROQ_MODEL` | llama-3.1-8b-instant | Primary Groq model to use (fast) |
+| `GROQ_SECONDARY_MODEL` | - | Optional secondary Groq model for extra suggestions (e.g., llama-3.1-70b-versatile) |
+| `GROQ_SUGGESTION_COUNT` | 2 | Max Groq suggestions to consider per tweet |
+| `GROQ_AUTO_DEPLOY` | true | When true, Groq suggestions enter the normal auto-deploy flow |
+| `GROQ_TEMPERATURE` | 0.2 | Sampling temperature for Groq calls |
+| `GROQ_MAX_TOKENS` | 256 | Max tokens for Groq responses |
+| `ZK_MIXER_ENABLED` | false | Enable Groth16 (bn254) proof verification for mixer withdrawals |
+| `ZK_MIXER_ARTIFACT_DIR` | ../ZCDOS/circuits/zk-mixer/target | Path to verification_key.json/wasm/ACIR |
+| `ZK_MIXER_NULLIFIER_STORE` | ./zk-nullifiers.json | File to persist used nullifier hashes |
 
 ## Usage
 
@@ -108,6 +127,13 @@ The frontend dev server runs on port 5173 and proxies API requests to the backen
 ```bash
 npm run build:all  # Builds both backend and frontend
 npm start
+```
+
+### MCP server (Claude Desktop / MCP clients)
+
+```bash
+npm install @modelcontextprotocol/sdk
+npm run mcp  # starts stdio MCP server exposing health/config/wallet/launch tools
 ```
 
 ## Web Interface

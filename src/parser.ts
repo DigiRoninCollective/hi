@@ -10,7 +10,7 @@ import { TweetData, ParsedLaunchCommand } from './types';
  */
 
 // Regex patterns for launch commands
-const LAUNCH_PATTERNS = [
+const LAUNCH_PATTERNS: RegExp[] = [
   // $LAUNCH TICKER [optional name/description]
   /\$LAUNCH\s+([A-Z0-9]{1,10})(?:\s+(.+?))?(?:\n|$|[.!?])/i,
 

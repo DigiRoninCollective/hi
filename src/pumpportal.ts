@@ -12,6 +12,7 @@ import {
   ParsedLaunchCommand,
 } from './types';
 import { ZkMixerService, ZkProofRequest } from './zk-mixer.service';
+import { MintKeyManager } from './mint-key-manager';
 
 const PUMPPORTAL_API_URL = 'https://pumpportal.fun/api';
 
@@ -20,16 +21,19 @@ export class PumpPortalService {
   private readonly wallet: Keypair;
   private readonly defaults: TokenDefaults;
   private readonly zkMixer?: ZkMixerService | null;
+  private readonly mintKeyManager: MintKeyManager;
 
   constructor(
     solanaConfig: SolanaConfig,
     defaults: TokenDefaults,
-    zkMixer?: ZkMixerService | null
+    zkMixer?: ZkMixerService | null,
+    db?: any // Optional Supabase client for MintKeyManager
   ) {
     this.connection = new Connection(solanaConfig.rpcUrl, 'confirmed');
     this.wallet = Keypair.fromSecretKey(bs58.decode(solanaConfig.privateKey));
     this.defaults = defaults;
     this.zkMixer = zkMixer;
+    this.mintKeyManager = new MintKeyManager(db);
 
     console.log(`Wallet initialized: ${this.wallet.publicKey.toBase58()}`);
   }
@@ -141,8 +145,21 @@ export class PumpPortalService {
       );
     }
 
-    // Generate a new mint keypair for the token
-    const mintKeypair = Keypair.generate();
+    // Generate and save mint keypair (or use custom contract if provided)
+    let mintKeypair: Keypair;
+    if (command.contractAddress) {
+      console.log(`  Using custom contract address: ${command.contractAddress}`);
+      // For custom contracts, we still need a mint keypair for signing
+      mintKeypair = Keypair.generate();
+    } else {
+      // Create and persist mint key for recovery
+      mintKeypair = await this.mintKeyManager.createAndSaveMintKey(
+        command.name,
+        command.ticker,
+        command.contractAddress,
+        command.tweetAuthor
+      );
+    }
     console.log(`  Mint address: ${mintKeypair.publicKey.toBase58()}`);
 
     // Upload metadata to IPFS
@@ -175,6 +192,11 @@ export class PumpPortalService {
 
     if (!response.ok) {
       const errorText = await response.text();
+      // Mark as failed if using DB
+      await this.mintKeyManager.markTokenFailed(
+        mintKeypair.publicKey.toBase58(),
+        errorText
+      );
       throw new Error(`PumpPortal API error: ${response.status} - ${errorText}`);
     }
 
@@ -187,9 +209,19 @@ export class PumpPortalService {
     const signature = await this.sendAndConfirm(transaction, [this.wallet, mintKeypair], 3);
     console.log(`Transaction sent: ${signature}`);
 
+    // Mark as confirmed in database
+    await this.mintKeyManager.markTokenConfirmed(
+      mintKeypair.publicKey.toBase58(),
+      signature,
+      command.contractAddress
+    );
+
     console.log(`\nToken created successfully!`);
     console.log(`  Signature: ${signature}`);
     console.log(`  Mint: ${mintKeypair.publicKey.toBase58()}`);
+    if (command.contractAddress) {
+      console.log(`  Contract: ${command.contractAddress}`);
+    }
     console.log(`  View on Solscan: https://solscan.io/tx/${signature}`);
     console.log(`  View on PumpFun: https://pump.fun/${mintKeypair.publicKey.toBase58()}`);
 

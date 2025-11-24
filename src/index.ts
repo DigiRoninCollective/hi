@@ -15,6 +15,7 @@ import { saveTweet, saveEvent, saveAlphaSignal } from './database.service';
 import { AlphaAggregatorService, ClassifiedSignal } from './alpha-aggregator.service';
 import { GroqService } from './groq.service';
 import { ZkMixerService } from './zk-mixer.service';
+import { PumpPortalDataService } from './pumpportal-data.service';
 
 // Track launched tokens to avoid duplicates
 const launchedTokens = new Set<string>();
@@ -170,6 +171,10 @@ async function main() {
   const alphaRouter = createAlphaRoutes(alphaAggregator, eventBus);
   sseServer.setAlphaRouter(alphaRouter);
   console.log('  [x] Alpha routes initialized');
+
+  // 6b. PumpPortal data websocket (optional)
+  const pumpPortalData = new PumpPortalDataService(config.pumpPortalData, eventBus);
+  await pumpPortalData.start();
 
   // 7. Twitter stream service (can be disabled for local/dev)
   let twitter: TwitterStreamService | null = null;
@@ -373,6 +378,7 @@ async function main() {
     if (alphaAggregator) {
       await alphaAggregator.stop();
     }
+    await pumpPortalData.stop();
     await sseServer.stop();
 
     // Log final stats

@@ -44,7 +44,7 @@ export function createAlphaRoutes(
   // ============================================
 
   // Get alpha signals with filters
-  router.get('/signals', async (req: Request, res: Response) => {
+  router.get('/signals', async (req: Request, res: Response): Promise<Response | void> => {
     if (!useSupabase) {
       return res.json({ signals: [], message: 'Supabase not configured' });
     }
@@ -70,7 +70,7 @@ export function createAlphaRoutes(
   });
 
   // Get single signal by ID
-  router.get('/signals/:id', async (req: Request, res: Response) => {
+  router.get('/signals/:id', async (req: Request, res: Response): Promise<Response | void> => {
     if (!useSupabase) {
       return res.status(404).json({ error: 'Signal not found' });
     }
@@ -88,7 +88,7 @@ export function createAlphaRoutes(
   });
 
   // Get signal statistics
-  router.get('/stats', async (req: Request, res: Response) => {
+  router.get('/stats', async (req: Request, res: Response): Promise<Response | void> => {
     try {
       // Get in-memory stats from aggregator
       const aggregatorStats = alphaAggregator?.getStats() || {
@@ -120,7 +120,7 @@ export function createAlphaRoutes(
   // ============================================
 
   // Get aggregator service status
-  router.get('/status', async (req: Request, res: Response) => {
+  router.get('/status', async (req: Request, res: Response): Promise<Response | void> => {
     if (!alphaAggregator) {
       return res.json({
         enabled: false,
@@ -146,7 +146,7 @@ export function createAlphaRoutes(
   });
 
   // Get available Discord channels
-  router.get('/discord/channels', async (req: Request, res: Response) => {
+  router.get('/discord/channels', async (req: Request, res: Response): Promise<Response | void> => {
     if (!alphaAggregator) {
       return res.json({ channels: [] });
     }
@@ -165,7 +165,7 @@ export function createAlphaRoutes(
   // ============================================
 
   // Add watched source (unified endpoint)
-  router.post('/watch', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.post('/watch', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     try {
       const { source, identifier, name } = req.body;
       const userId = req.user!.id;
@@ -223,7 +223,7 @@ export function createAlphaRoutes(
   });
 
   // Remove watched source
-  router.delete('/watch/:source/:id', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.delete('/watch/:source/:id', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     try {
       const { source, id } = req.params;
       const userId = req.user!.id;
@@ -256,7 +256,7 @@ export function createAlphaRoutes(
   });
 
   // Get user's watched sources
-  router.get('/watch', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.get('/watch', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     if (!useSupabase) {
       // Return in-memory watched if no Supabase
       const watched = alphaAggregator?.getWatched() || { discord: [], telegram: [], reddit: [] };
@@ -283,7 +283,7 @@ export function createAlphaRoutes(
   // ============================================
 
   // Get user's filters
-  router.get('/filters', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.get('/filters', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     if (!useSupabase) {
       return res.json({ filters: [] });
     }
@@ -298,7 +298,7 @@ export function createAlphaRoutes(
   });
 
   // Create filter
-  router.post('/filters', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.post('/filters', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     if (!useSupabase) {
       return res.status(503).json({ error: 'Supabase not configured' });
     }
@@ -331,7 +331,7 @@ export function createAlphaRoutes(
   });
 
   // Update filter
-  router.put('/filters/:id', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.put('/filters/:id', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     if (!useSupabase) {
       return res.status(503).json({ error: 'Supabase not configured' });
     }
@@ -349,7 +349,7 @@ export function createAlphaRoutes(
   });
 
   // Delete filter
-  router.delete('/filters/:id', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.delete('/filters/:id', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     if (!useSupabase) {
       return res.status(503).json({ error: 'Supabase not configured' });
     }
@@ -371,7 +371,7 @@ export function createAlphaRoutes(
   // ============================================
 
   // Like/save/hide signal
-  router.post('/signals/:id/interact', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.post('/signals/:id/interact', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     if (!useSupabase) {
       return res.status(503).json({ error: 'Supabase not configured' });
     }
@@ -400,7 +400,7 @@ export function createAlphaRoutes(
   });
 
   // Remove interaction
-  router.delete('/signals/:id/interact/:type', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.delete('/signals/:id/interact/:type', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     if (!useSupabase) {
       return res.status(503).json({ error: 'Supabase not configured' });
     }
@@ -415,7 +415,7 @@ export function createAlphaRoutes(
   });
 
   // Get user's saved signals
-  router.get('/saved', authMiddleware(true), async (req: AuthenticatedRequest, res: Response) => {
+  router.get('/saved', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
     if (!useSupabase) {
       return res.json({ signals: [] });
     }

@@ -4,6 +4,12 @@ import * as path from 'path';
 import { EventBus, BaseEvent, EventType } from './events';
 import { TweetClassifier } from './classifier';
 import { PumpPortalService } from './pumpportal';
+import {
+  corsMiddleware,
+  securityHeaders,
+  requestLogger,
+  eventStreamLimiter,
+} from './security.middleware';
 
 interface SSEClient {
   id: string;
@@ -87,16 +93,20 @@ export class SSEServer {
    * Setup Express middleware
    */
   private setupMiddleware(): void {
-    // CORS middleware
-    this.app.use((req, res, next) => {
-      res.header('Access-Control-Allow-Origin', this.config.corsOrigin);
-      res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-      if (req.method === 'OPTIONS') {
-        return res.sendStatus(200);
-      }
-      next();
-    });
+    // Security headers
+    this.app.use(securityHeaders);
+
+    // Request logging
+    this.app.use(requestLogger);
+
+    // CORS middleware with whitelisting
+    const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
+      'http://localhost:3000',
+      'http://localhost:5173',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:5173',
+    ];
+    this.app.use(corsMiddleware(allowedOrigins));
 
     // JSON body parser with larger limit for image uploads
     this.app.use(express.json({ limit: '10mb' }));
