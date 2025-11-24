@@ -8,7 +8,7 @@ CREATE TYPE alpha_signal_priority AS ENUM ('low', 'medium', 'high', 'urgent');
 
 -- Watched Discord channels
 CREATE TABLE watched_discord_channels (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     guild_id VARCHAR(30) NOT NULL,
     guild_name VARCHAR(100),
@@ -21,7 +21,7 @@ CREATE TABLE watched_discord_channels (
 
 -- Watched Telegram channels/groups
 CREATE TABLE watched_telegram_channels (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     chat_id VARCHAR(30) NOT NULL,
     chat_name VARCHAR(100),
@@ -33,7 +33,7 @@ CREATE TABLE watched_telegram_channels (
 
 -- Watched Reddit subreddits
 CREATE TABLE watched_subreddits (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     subreddit VARCHAR(50) NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT true,
@@ -43,7 +43,7 @@ CREATE TABLE watched_subreddits (
 
 -- Alpha signals - unified table for all sources
 CREATE TABLE alpha_signals (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     source alpha_source_type NOT NULL,
     source_id VARCHAR(100) NOT NULL, -- Original message/post ID from the source
     source_channel VARCHAR(100), -- Channel/subreddit/group name
@@ -85,7 +85,7 @@ CREATE TABLE alpha_signals (
 
 -- User alpha filters - custom filters per user
 CREATE TABLE user_alpha_filters (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL,
 
@@ -112,7 +112,7 @@ CREATE TABLE user_alpha_filters (
 
 -- User signal interactions (likes, saves, hides)
 CREATE TABLE user_signal_interactions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     signal_id UUID NOT NULL REFERENCES alpha_signals(id) ON DELETE CASCADE,
     interaction_type VARCHAR(20) NOT NULL, -- 'like', 'save', 'hide', 'report'
@@ -122,7 +122,7 @@ CREATE TABLE user_signal_interactions (
 
 -- Alpha source credentials (encrypted bot tokens, etc.)
 CREATE TABLE alpha_source_credentials (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES users(id) ON DELETE CASCADE, -- null = system-wide
     source alpha_source_type NOT NULL,
     credential_type VARCHAR(50) NOT NULL, -- 'bot_token', 'api_key', 'oauth_token'

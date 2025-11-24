@@ -2,7 +2,7 @@
 -- Run this in your Supabase SQL Editor to set up the database
 
 -- Enable UUID extension
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;
 
 -- Create custom types
 CREATE TYPE user_role AS ENUM ('user', 'admin', 'moderator');
@@ -15,7 +15,7 @@ CREATE TYPE transaction_status AS ENUM ('pending', 'confirmed', 'failed');
 
 -- Users table
 CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username VARCHAR(30) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -27,7 +27,7 @@ CREATE TABLE users (
 
 -- Password hashes (separate table for security)
 CREATE TABLE password_hashes (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     hash VARCHAR(256) NOT NULL,
     salt VARCHAR(64) NOT NULL,
@@ -37,7 +37,7 @@ CREATE TABLE password_hashes (
 
 -- User settings
 CREATE TABLE user_settings (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     color_theme VARCHAR(50) NOT NULL DEFAULT 'Default',
     image_layout image_layout NOT NULL DEFAULT 'grid',
@@ -52,7 +52,7 @@ CREATE TABLE user_settings (
 
 -- Sessions for authentication
 CREATE TABLE sessions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token VARCHAR(128) UNIQUE NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
@@ -63,7 +63,7 @@ CREATE TABLE sessions (
 
 -- Watched Twitter accounts
 CREATE TABLE watched_accounts (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     twitter_username VARCHAR(50) NOT NULL,
     twitter_user_id VARCHAR(30),
@@ -75,7 +75,7 @@ CREATE TABLE watched_accounts (
 
 -- Word highlighting rules
 CREATE TABLE word_highlights (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     word VARCHAR(100) NOT NULL,
     color VARCHAR(20) NOT NULL DEFAULT '#22c55e',
@@ -85,7 +85,7 @@ CREATE TABLE word_highlights (
 
 -- Contract addresses to monitor
 CREATE TABLE contract_addresses (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     address VARCHAR(100) NOT NULL,
     label VARCHAR(100),
@@ -96,7 +96,7 @@ CREATE TABLE contract_addresses (
 
 -- Tweets storage
 CREATE TABLE tweets (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tweet_id VARCHAR(30) UNIQUE NOT NULL,
     author_username VARCHAR(50) NOT NULL,
     author_display_name VARCHAR(100),
@@ -113,7 +113,7 @@ CREATE TABLE tweets (
 
 -- Tokens created through the platform
 CREATE TABLE tokens (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     mint_address VARCHAR(100) UNIQUE NOT NULL,
     name VARCHAR(100) NOT NULL,
     symbol VARCHAR(20) NOT NULL,
@@ -134,7 +134,7 @@ CREATE TABLE tokens (
 
 -- Token transactions
 CREATE TABLE token_transactions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     token_id UUID NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
     user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     type transaction_type NOT NULL,
@@ -147,7 +147,7 @@ CREATE TABLE token_transactions (
 
 -- Events log
 CREATE TABLE events (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     type VARCHAR(50) NOT NULL,
     data JSONB NOT NULL,
     user_id UUID REFERENCES users(id) ON DELETE SET NULL,
