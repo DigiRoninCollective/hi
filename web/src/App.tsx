@@ -11,6 +11,11 @@ import SettingsPage from './pages/SettingsPage'
 import AdminPage from './pages/AdminPage'
 import TelegramAdminPage from './pages/TelegramAdminPage'
 import HelpPage from './pages/HelpPage'
+import TransactionHistoryPage from './pages/TransactionHistoryPage'
+import PortfolioPage from './pages/PortfolioPage'
+import EmergencyControlPage from './pages/EmergencyControlPage'
+import WalletHealthPage from './pages/WalletHealthPage'
+import RPCStatusPage from './pages/RPCStatusPage'
 
 function App() {
   return (
@@ -30,6 +35,11 @@ function App() {
         <Route path="admin" element={<AdminPage />} />
         <Route path="telegram-admin" element={<TelegramAdminPage />} />
         <Route path="help" element={<HelpPage />} />
+        <Route path="transactions" element={<TransactionHistoryPage />} />
+        <Route path="portfolio" element={<PortfolioPage />} />
+        <Route path="emergency" element={<EmergencyControlPage />} />
+        <Route path="wallet" element={<WalletHealthPage />} />
+        <Route path="rpc-status" element={<RPCStatusPage />} />
       </Route>
     </Routes>
   )
