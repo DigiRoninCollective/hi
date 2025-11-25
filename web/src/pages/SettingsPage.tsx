@@ -30,17 +30,54 @@ export default function SettingsPage() {
 
   const [isSaving, setIsSaving] = useState(false)
   const [localSettings, setLocalSettings] = useState({
+    // UI & Appearance
     theme: 'dark' as 'dark' | 'light' | 'system',
     image_layout: 'grid' as 'grid' | 'list' | 'compact',
     card_width: 300,
+    show_balance_in_usd: true,
+    number_format: 'comma' as 'comma' | 'space' | 'none',
+    show_testnet_warning: true,
+
+    // Notifications & Alerts
     notifications_enabled: true,
     sound_enabled: false,
+    large_transaction_alert: true,
+    large_transaction_threshold: 5, // SOL
+    high_slippage_alert: true,
+    high_slippage_threshold: 1, // %
+
+    // Trading & Deployment
     auto_deploy_enabled: false,
     default_buy_amount: 0.1,
     default_platform: 'pump',
+    slippage_tolerance: 0.5, // %
+    transaction_priority: 'normal' as 'low' | 'normal' | 'high' | 'custom',
+    custom_priority_fee: 0,
+    simulate_transactions: true,
+
+    // Auto-sell & Take-profit
+    auto_sell_enabled: false,
+    auto_sell_percentage: 25, // %
+    take_profit_enabled: false,
+    take_profit_targets: '1.5x,2x,5x', // comma-separated
+    stop_loss_enabled: false,
+    stop_loss_percentage: 10, // %
+
+    // Solana Network
     solana_network: 'mainnet-beta' as 'mainnet-beta' | 'devnet' | 'testnet',
     custom_rpc_url: '',
     use_custom_rpc: false,
+
+    // External Services
+    birdeye_api_key: '',
+    blockscout_api_key: '',
+    alchemy_api_key: '',
+
+    // Data & Backup
+    export_settings_frequency: 'never' as 'never' | 'daily' | 'weekly' | 'manual',
+    auto_export_transactions: false,
+    export_transaction_frequency: 'never' as 'never' | 'weekly' | 'monthly' | 'manual',
+    clear_cache_on_exit: false,
   })
 
   // Watched accounts
@@ -57,17 +94,54 @@ export default function SettingsPage() {
   useEffect(() => {
     if (settings) {
       setLocalSettings({
+        // UI & Appearance
         theme: settings.theme || 'dark',
         image_layout: settings.image_layout || 'grid',
         card_width: settings.card_width || 300,
+        show_balance_in_usd: settings.show_balance_in_usd ?? true,
+        number_format: settings.number_format || 'comma',
+        show_testnet_warning: settings.show_testnet_warning ?? true,
+
+        // Notifications & Alerts
         notifications_enabled: settings.notifications_enabled ?? true,
         sound_enabled: settings.sound_enabled ?? false,
+        large_transaction_alert: settings.large_transaction_alert ?? true,
+        large_transaction_threshold: settings.large_transaction_threshold || 5,
+        high_slippage_alert: settings.high_slippage_alert ?? true,
+        high_slippage_threshold: settings.high_slippage_threshold || 1,
+
+        // Trading & Deployment
         auto_deploy_enabled: settings.auto_deploy_enabled ?? false,
         default_buy_amount: settings.default_buy_amount || 0.1,
         default_platform: settings.default_platform || 'pump',
+        slippage_tolerance: settings.slippage_tolerance || 0.5,
+        transaction_priority: settings.transaction_priority || 'normal',
+        custom_priority_fee: settings.custom_priority_fee || 0,
+        simulate_transactions: settings.simulate_transactions ?? true,
+
+        // Auto-sell & Take-profit
+        auto_sell_enabled: settings.auto_sell_enabled ?? false,
+        auto_sell_percentage: settings.auto_sell_percentage || 25,
+        take_profit_enabled: settings.take_profit_enabled ?? false,
+        take_profit_targets: settings.take_profit_targets || '1.5x,2x,5x',
+        stop_loss_enabled: settings.stop_loss_enabled ?? false,
+        stop_loss_percentage: settings.stop_loss_percentage || 10,
+
+        // Solana Network
         solana_network: settings.solana_network || 'mainnet-beta',
         custom_rpc_url: settings.custom_rpc_url || '',
         use_custom_rpc: settings.use_custom_rpc ?? false,
+
+        // External Services
+        birdeye_api_key: settings.birdeye_api_key || '',
+        blockscout_api_key: settings.blockscout_api_key || '',
+        alchemy_api_key: settings.alchemy_api_key || '',
+
+        // Data & Backup
+        export_settings_frequency: settings.export_settings_frequency || 'never',
+        auto_export_transactions: settings.auto_export_transactions ?? false,
+        export_transaction_frequency: settings.export_transaction_frequency || 'never',
+        clear_cache_on_exit: settings.clear_cache_on_exit ?? false,
       })
     }
   }, [settings])
@@ -329,6 +403,335 @@ export default function SettingsPage() {
                 type="checkbox"
                 checked={localSettings.auto_deploy_enabled}
                 onChange={(e) => setLocalSettings(s => ({ ...s, auto_deploy_enabled: e.target.checked }))}
+                className="toggle"
+              />
+            </label>
+          </div>
+        </section>
+
+        {/* Display Preferences Section */}
+        <section className="bg-dark-800 rounded-xl border border-dark-600 p-6">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Palette className="w-5 h-5" />
+            Display Preferences
+          </h2>
+          <div className="space-y-4">
+            <label className="flex items-center justify-between cursor-pointer">
+              <span>Show Balance in USD</span>
+              <input
+                type="checkbox"
+                checked={localSettings.show_balance_in_usd}
+                onChange={(e) => setLocalSettings(s => ({ ...s, show_balance_in_usd: e.target.checked }))}
+                className="toggle"
+              />
+            </label>
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">Number Format</label>
+              <select
+                value={localSettings.number_format}
+                onChange={(e) => setLocalSettings(s => ({ ...s, number_format: e.target.value as 'comma' | 'space' | 'none' }))}
+                className="w-full bg-dark-700 rounded-lg px-4 py-2 border border-dark-600"
+              >
+                <option value="comma">1,234.56</option>
+                <option value="space">1 234.56</option>
+                <option value="none">1234.56</option>
+              </select>
+            </div>
+            <label className="flex items-center justify-between cursor-pointer">
+              <span>Show Testnet Warning</span>
+              <input
+                type="checkbox"
+                checked={localSettings.show_testnet_warning}
+                onChange={(e) => setLocalSettings(s => ({ ...s, show_testnet_warning: e.target.checked }))}
+                className="toggle"
+              />
+            </label>
+          </div>
+        </section>
+
+        {/* Security Alerts Section */}
+        <section className="bg-dark-800 rounded-xl border border-dark-600 p-6">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Lock className="w-5 h-5" />
+            Security Alerts
+          </h2>
+          <div className="space-y-4">
+            <label className="flex items-center justify-between cursor-pointer">
+              <span>Large Transaction Warning</span>
+              <input
+                type="checkbox"
+                checked={localSettings.large_transaction_alert}
+                onChange={(e) => setLocalSettings(s => ({ ...s, large_transaction_alert: e.target.checked }))}
+                className="toggle"
+              />
+            </label>
+            {localSettings.large_transaction_alert && (
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Threshold (SOL)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  value={localSettings.large_transaction_threshold}
+                  onChange={(e) => setLocalSettings(s => ({ ...s, large_transaction_threshold: parseFloat(e.target.value) || 0 }))}
+                  className="w-full bg-dark-700 rounded-lg px-4 py-2 border border-dark-600"
+                />
+              </div>
+            )}
+            <label className="flex items-center justify-between cursor-pointer">
+              <span>High Slippage Warning</span>
+              <input
+                type="checkbox"
+                checked={localSettings.high_slippage_alert}
+                onChange={(e) => setLocalSettings(s => ({ ...s, high_slippage_alert: e.target.checked }))}
+                className="toggle"
+              />
+            </label>
+            {localSettings.high_slippage_alert && (
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Threshold (%)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  value={localSettings.high_slippage_threshold}
+                  onChange={(e) => setLocalSettings(s => ({ ...s, high_slippage_threshold: parseFloat(e.target.value) || 0 }))}
+                  className="w-full bg-dark-700 rounded-lg px-4 py-2 border border-dark-600"
+                />
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* Advanced Trading Section */}
+        <section className="bg-dark-800 rounded-xl border border-dark-600 p-6">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Settings className="w-5 h-5" />
+            Advanced Trading
+          </h2>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">Slippage Tolerance (%)</label>
+              <input
+                type="number"
+                step="0.1"
+                min="0"
+                max="50"
+                value={localSettings.slippage_tolerance}
+                onChange={(e) => setLocalSettings(s => ({ ...s, slippage_tolerance: parseFloat(e.target.value) || 0 }))}
+                className="w-full bg-dark-700 rounded-lg px-4 py-2 border border-dark-600"
+              />
+              <p className="text-xs text-gray-500 mt-1">Protect against price impact (0.1% - 50%)</p>
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">Transaction Priority</label>
+              <select
+                value={localSettings.transaction_priority}
+                onChange={(e) => setLocalSettings(s => ({ ...s, transaction_priority: e.target.value as 'low' | 'normal' | 'high' | 'custom' }))}
+                className="w-full bg-dark-700 rounded-lg px-4 py-2 border border-dark-600"
+              >
+                <option value="low">Low (Slower, cheaper)</option>
+                <option value="normal">Normal (Balanced)</option>
+                <option value="high">High (Faster, expensive)</option>
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+            {localSettings.transaction_priority === 'custom' && (
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Custom Priority Fee (SOL)</label>
+                <input
+                  type="number"
+                  step="0.00001"
+                  min="0"
+                  value={localSettings.custom_priority_fee}
+                  onChange={(e) => setLocalSettings(s => ({ ...s, custom_priority_fee: parseFloat(e.target.value) || 0 }))}
+                  className="w-full bg-dark-700 rounded-lg px-4 py-2 border border-dark-600"
+                />
+              </div>
+            )}
+            <label className="flex items-center justify-between cursor-pointer">
+              <span>Simulate Transactions Before Sending</span>
+              <input
+                type="checkbox"
+                checked={localSettings.simulate_transactions}
+                onChange={(e) => setLocalSettings(s => ({ ...s, simulate_transactions: e.target.checked }))}
+                className="toggle"
+              />
+            </label>
+          </div>
+        </section>
+
+        {/* Auto-sell & Take-profit Section */}
+        <section className="bg-dark-800 rounded-xl border border-dark-600 p-6">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Wallet className="w-5 h-5" />
+            Auto-sell & Take-profit
+          </h2>
+          <div className="space-y-4">
+            <label className="flex items-center justify-between cursor-pointer">
+              <span>Enable Auto-sell</span>
+              <input
+                type="checkbox"
+                checked={localSettings.auto_sell_enabled}
+                onChange={(e) => setLocalSettings(s => ({ ...s, auto_sell_enabled: e.target.checked }))}
+                className="toggle"
+              />
+            </label>
+            {localSettings.auto_sell_enabled && (
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Auto-sell Percentage (%)</label>
+                <input
+                  type="number"
+                  step="1"
+                  min="0"
+                  max="100"
+                  value={localSettings.auto_sell_percentage}
+                  onChange={(e) => setLocalSettings(s => ({ ...s, auto_sell_percentage: parseFloat(e.target.value) || 0 }))}
+                  className="w-full bg-dark-700 rounded-lg px-4 py-2 border border-dark-600"
+                />
+              </div>
+            )}
+            <label className="flex items-center justify-between cursor-pointer">
+              <span>Enable Take-profit Targets</span>
+              <input
+                type="checkbox"
+                checked={localSettings.take_profit_enabled}
+                onChange={(e) => setLocalSettings(s => ({ ...s, take_profit_enabled: e.target.checked }))}
+                className="toggle"
+              />
+            </label>
+            {localSettings.take_profit_enabled && (
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Take-profit Targets (comma-separated)</label>
+                <input
+                  type="text"
+                  placeholder="1.5x,2x,5x,10x"
+                  value={localSettings.take_profit_targets}
+                  onChange={(e) => setLocalSettings(s => ({ ...s, take_profit_targets: e.target.value }))}
+                  className="w-full bg-dark-700 rounded-lg px-4 py-2 border border-dark-600"
+                />
+                <p className="text-xs text-gray-500 mt-1">e.g., 1.5x, 2x, 5x, 10x</p>
+              </div>
+            )}
+            <label className="flex items-center justify-between cursor-pointer">
+              <span>Enable Stop-loss</span>
+              <input
+                type="checkbox"
+                checked={localSettings.stop_loss_enabled}
+                onChange={(e) => setLocalSettings(s => ({ ...s, stop_loss_enabled: e.target.checked }))}
+                className="toggle"
+              />
+            </label>
+            {localSettings.stop_loss_enabled && (
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Stop-loss Percentage (%)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="100"
+                  value={localSettings.stop_loss_percentage}
+                  onChange={(e) => setLocalSettings(s => ({ ...s, stop_loss_percentage: parseFloat(e.target.value) || 0 }))}
+                  className="w-full bg-dark-700 rounded-lg px-4 py-2 border border-dark-600"
+                />
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* External API Keys Section */}
+        <section className="bg-dark-800 rounded-xl border border-dark-600 p-6">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Settings className="w-5 h-5" />
+            External Services
+          </h2>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">Birdeye API Key (Optional)</label>
+              <input
+                type="password"
+                placeholder="Enter your Birdeye API key"
+                value={localSettings.birdeye_api_key}
+                onChange={(e) => setLocalSettings(s => ({ ...s, birdeye_api_key: e.target.value }))}
+                className="w-full bg-dark-700 rounded-lg px-4 py-2 border border-dark-600"
+              />
+              <p className="text-xs text-gray-500 mt-1">For advanced charting and analytics</p>
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">BlockScout API Key (Optional)</label>
+              <input
+                type="password"
+                placeholder="Enter your BlockScout API key"
+                value={localSettings.blockscout_api_key}
+                onChange={(e) => setLocalSettings(s => ({ ...s, blockscout_api_key: e.target.value }))}
+                className="w-full bg-dark-700 rounded-lg px-4 py-2 border border-dark-600"
+              />
+              <p className="text-xs text-gray-500 mt-1">For blockchain explorer integration</p>
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">Alchemy API Key (Optional)</label>
+              <input
+                type="password"
+                placeholder="Enter your Alchemy API key"
+                value={localSettings.alchemy_api_key}
+                onChange={(e) => setLocalSettings(s => ({ ...s, alchemy_api_key: e.target.value }))}
+                className="w-full bg-dark-700 rounded-lg px-4 py-2 border border-dark-600"
+              />
+              <p className="text-xs text-gray-500 mt-1">For enhanced RPC features and webhooks</p>
+            </div>
+          </div>
+        </section>
+
+        {/* Data & Backup Section */}
+        <section className="bg-dark-800 rounded-xl border border-dark-600 p-6">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Settings className="w-5 h-5" />
+            Data & Backup
+          </h2>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">Auto-export Settings</label>
+              <select
+                value={localSettings.export_settings_frequency}
+                onChange={(e) => setLocalSettings(s => ({ ...s, export_settings_frequency: e.target.value as 'never' | 'daily' | 'weekly' | 'manual' }))}
+                className="w-full bg-dark-700 rounded-lg px-4 py-2 border border-dark-600"
+              >
+                <option value="never">Never</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="manual">Manual Only</option>
+              </select>
+            </div>
+            <label className="flex items-center justify-between cursor-pointer">
+              <span>Auto-export Transaction History</span>
+              <input
+                type="checkbox"
+                checked={localSettings.auto_export_transactions}
+                onChange={(e) => setLocalSettings(s => ({ ...s, auto_export_transactions: e.target.checked }))}
+                className="toggle"
+              />
+            </label>
+            {localSettings.auto_export_transactions && (
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Export Frequency</label>
+                <select
+                  value={localSettings.export_transaction_frequency}
+                  onChange={(e) => setLocalSettings(s => ({ ...s, export_transaction_frequency: e.target.value as 'never' | 'weekly' | 'monthly' | 'manual' }))}
+                  className="w-full bg-dark-700 rounded-lg px-4 py-2 border border-dark-600"
+                >
+                  <option value="never">Never</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="manual">Manual Only</option>
+                </select>
+              </div>
+            )}
+            <label className="flex items-center justify-between cursor-pointer">
+              <span>Clear Cache on Exit</span>
+              <input
+                type="checkbox"
+                checked={localSettings.clear_cache_on_exit}
+                onChange={(e) => setLocalSettings(s => ({ ...s, clear_cache_on_exit: e.target.checked }))}
                 className="toggle"
               />
             </label>
