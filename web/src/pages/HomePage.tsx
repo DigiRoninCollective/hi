@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import {
   Rocket,
   MessageSquare,
@@ -12,9 +11,9 @@ import {
   Wallet,
   KeyRound,
   Send,
-  Loader2,
 } from 'lucide-react'
 import { openExternal } from '../utils/electron'
+import { WalletConnector } from '../components/WalletConnector'
 
 interface Stats {
   tokensLaunched: number
@@ -30,8 +29,7 @@ export default function HomePage() {
   const [walletModalOpen, setWalletModalOpen] = useState(false)
 
   const navigate = useNavigate()
-  const { connected, connecting, publicKey, disconnect } = useWallet()
-  const { setVisible: setWalletModalVisible } = useWalletModal()
+  const { connected, disconnect } = useWallet()
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -263,24 +261,12 @@ export default function HomePage() {
               </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-3">
-              <button
-                onClick={() => setWalletModalVisible(true)}
-                className="flex items-center justify-between px-4 py-3 rounded-xl bg-dark-700 hover:bg-dark-600 border border-dark-500"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-xl">🟣</span>
-                  <div className="text-left">
-                    <div className="font-semibold">Select a wallet</div>
-                    <div className="text-xs text-gray-400">Phantom, Backpack, Solflare, more</div>
-                  </div>
-                </div>
-                {connecting && <Loader2 className="w-4 h-4 animate-spin text-accent-green" />}
-              </button>
+            <div className="space-y-3">
+              <WalletConnector />
 
               <button
                 onClick={() => openExternal('https://station.jup.ag/')}
-                className="flex items-center justify-between px-4 py-3 rounded-xl bg-dark-700 hover:bg-dark-600 border border-dark-500"
+                className="w-full flex items-center justify-between px-4 py-3 rounded-xl bg-dark-700 hover:bg-dark-600 border border-dark-500"
               >
                 <div className="flex items-center gap-3">
                   <span className="text-xl">🟢</span>
@@ -291,12 +277,6 @@ export default function HomePage() {
                 </div>
               </button>
             </div>
-
-            {connected && publicKey && (
-              <div className="text-sm text-accent-green bg-accent-green/10 border border-accent-green/30 rounded-lg px-3 py-2">
-                Connected: {publicKey.toBase58().slice(0, 6)}...{publicKey.toBase58().slice(-4)}
-              </div>
-            )}
 
             {connected && (
               <button
