@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Rocket,
   Upload,
@@ -10,7 +11,10 @@ import {
   Check,
   ExternalLink,
   Sparkles,
+  ArrowLeft,
 } from 'lucide-react'
+import { openExternal } from '../utils/electron'
+import { useBackNavigation } from '../hooks/useNavigation'
 
 type Platform = 'pump' | 'bonk' | 'bags' | 'bnb' | 'usd1'
 
@@ -38,6 +42,8 @@ interface DeployStatus {
 }
 
 export default function TokenDeployPage() {
+
+  const { goBack } = useBackNavigation()
   const [form, setForm] = useState<TokenForm>({
     name: '',
     symbol: '',
@@ -55,12 +61,55 @@ export default function TokenDeployPage() {
   })
 
   const [autoGenerateTicker, setAutoGenerateTicker] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
   const [deployStatus, setDeployStatus] = useState<DeployStatus>({
     status: 'idle',
     message: '',
   })
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleSearch = () => {
+    if (!searchQuery.trim()) {
+      setDeployStatus({
+        status: 'error',
+        message: 'Enter a search term to find token suggestions.',
+      })
+      return
+    }
+
+    // Fetch token suggestions from API
+    fetch(`/api/tokens/search?q=${encodeURIComponent(searchQuery)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.tokens && data.tokens.length > 0) {
+          const token = data.tokens[0]
+          setForm((prev) => ({
+            ...prev,
+            name: token.name,
+            symbol: token.symbol,
+            description: token.description || '',
+            website: token.website || '',
+            twitterUrl: token.twitter || '',
+          }))
+          setDeployStatus({
+            status: 'idle',
+            message: `Found "${token.name}" - update details and deploy.`,
+          })
+        } else {
+          setDeployStatus({
+            status: 'error',
+            message: `No tokens found for "${searchQuery}". Try a different search.`,
+          })
+        }
+      })
+      .catch(() => {
+        setDeployStatus({
+          status: 'error',
+          message: 'Search failed. Try again.',
+        })
+      })
+  }
 
   const platforms: { id: Platform; label: string; icon: string; color: string }[] = [
     { id: 'pump', label: 'Pump', icon: '🚀', color: 'bg-green-600' },
@@ -83,6 +132,49 @@ export default function TokenDeployPage() {
       .toUpperCase()
       .replace(/[^A-Z0-9]/g, '')
       .slice(0, 10)
+  }
+
+  const handleLetterDeploy = () => {
+    setForm((prev) => ({
+      ...prev,
+      multiDeploy: true,
+      deployCount: 26,
+    }))
+    setDeployStatus({
+      status: 'idle',
+      message: 'Multi-deploy set to 26 tokens (A-Z). Click Deploy to start.',
+    })
+  }
+
+  const handleAsciiDeploy = () => {
+    setForm((prev) => ({
+      ...prev,
+      multiDeploy: true,
+      deployCount: 95,
+    }))
+    setDeployStatus({
+      status: 'idle',
+      message: 'Multi-deploy set to 95 tokens (ASCII printable). Click Deploy to start.',
+    })
+  }
+
+  const handleBundleDeploy = () => {
+    if (!form.multiDeploy) {
+      setDeployStatus({
+        status: 'error',
+        message: 'Multi-deploy must be enabled first. Enable it above.',
+      })
+      return
+    }
+    setForm((prev) => ({
+      ...prev,
+      multiDeploy: true,
+      deployCount: 10,
+    }))
+    setDeployStatus({
+      status: 'idle',
+      message: 'Bundle deploy set to 10 tokens. Click Deploy to start.',
+    })
   }
 
   const handleImageDrop = useCallback((e: React.DragEvent) => {
@@ -194,6 +286,13 @@ export default function TokenDeployPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold flex items-center gap-2">
+          <button
+            onClick={goBack}
+            className="p-2 hover:bg-dark-700 rounded-lg transition-colors"
+            title="Go back"
+          >
+            <ArrowLeft className="w-6 h-6 text-gray-400 hover:text-white" />
+          </button>
           <Rocket className="w-6 h-6 text-accent-green" />
           Token Deploy
         </h1>
@@ -420,9 +519,22 @@ export default function TokenDeployPage() {
               <Clipboard className="w-4 h-4" />
               Paste from Clipboard
             </button>
-            <button className="flex items-center gap-2 px-4 py-2 bg-dark-700 rounded-lg text-sm hover:bg-dark-600">
-              <Search className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-2 px-3 py-2 bg-dark-700 rounded-lg text-sm flex-1">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                placeholder="Search tokens..."
+                className="bg-transparent flex-1 outline-none"
+              />
+              <button
+                onClick={handleSearch}
+                className="hover:text-accent-green transition-colors"
+              >
+                <Search className="w-4 h-4" />
+              </button>
+            </div>
             <div className="flex-1" />
             <button
               onClick={() => setForm((prev) => ({ ...prev, autoSell: !prev.autoSell }))}
@@ -442,10 +554,16 @@ export default function TokenDeployPage() {
 
         {/* Deploy Buttons */}
         <div className="flex gap-3">
-          <button className="px-6 py-3 bg-accent-green text-dark-900 rounded-lg font-bold hover:bg-green-400">
+          <button
+            onClick={handleLetterDeploy}
+            className="px-6 py-3 bg-accent-green text-dark-900 rounded-lg font-bold hover:bg-green-400"
+          >
             LETTER
           </button>
-          <button className="px-6 py-3 bg-dark-600 text-white rounded-lg font-bold hover:bg-dark-500">
+          <button
+            onClick={handleAsciiDeploy}
+            className="px-6 py-3 bg-dark-600 text-white rounded-lg font-bold hover:bg-dark-500"
+          >
             ASCII
           </button>
           <button
@@ -465,7 +583,10 @@ export default function TokenDeployPage() {
               </>
             )}
           </button>
-          <button className="px-6 py-3 bg-dark-700 text-white rounded-lg font-bold hover:bg-dark-600 flex items-center gap-2">
+          <button
+            onClick={handleBundleDeploy}
+            className="px-6 py-3 bg-dark-700 text-white rounded-lg font-bold hover:bg-dark-600 flex items-center gap-2"
+          >
             <span className="grid grid-cols-2 gap-0.5">
               <span className="w-1.5 h-1.5 bg-current rounded-sm" />
               <span className="w-1.5 h-1.5 bg-current rounded-sm" />
@@ -497,22 +618,20 @@ export default function TokenDeployPage() {
             </div>
             {deployStatus.mint && (
               <div className="mt-2 space-y-1 text-sm">
-                <a
-                  href={`https://pump.fun/${deployStatus.mint}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <button
+                  type="button"
+                  onClick={() => openExternal(`https://pump.fun/${deployStatus.mint}`)}
                   className="flex items-center gap-1 text-accent-green hover:underline"
                 >
                   View on PumpFun <ExternalLink className="w-3 h-3" />
-                </a>
-                <a
-                  href={`https://solscan.io/tx/${deployStatus.signature}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openExternal(`https://solscan.io/tx/${deployStatus.signature}`)}
                   className="flex items-center gap-1 text-blue-400 hover:underline"
                 >
                   View Transaction <ExternalLink className="w-3 h-3" />
-                </a>
+                </button>
               </div>
             )}
           </div>

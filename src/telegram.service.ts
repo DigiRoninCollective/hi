@@ -104,9 +104,26 @@ export class TelegramService {
   private onMessageHandler: ((message: TelegramMessageData) => Promise<void>) | null = null;
   private subscriptions: Map<string, UserSubscription> = new Map();
   private botUsername: string = '';
+  private botId?: number;
+  private botFirstName?: string;
   private launchApiUrl?: string;
   private launchApiKey?: string;
   private defaultLaunchAmount: number;
+  // Groq conversation state
+  private groqConversations: Map<string, { active: boolean; messages: Array<{ role: 'user' | 'assistant'; content: string }> }> = new Map();
+  private groqApiKey?: string;
+  private groqModel: string = 'llama-3.3-70b-versatile';
+  private groqLastRequestAt: Map<string, number> = new Map();
+  private groqMinIntervalMs = 4000;
+  private adminMessages: Array<{
+    id: string;
+    timestamp: string;
+    chatId: string;
+    username: string;
+    content: string;
+    type: 'sent' | 'received';
+  }> = [];
+  private adminMessageLimit = 200;
 
   constructor(config: TelegramConfig, bus: EventBus = eventBus) {
     this.config = config;
@@ -115,6 +132,100 @@ export class TelegramService {
     this.launchApiUrl = config.launchApiUrl;
     this.launchApiKey = config.launchApiKey;
     this.defaultLaunchAmount = config.defaultLaunchAmount ?? 0.1;
+    this.groqApiKey = process.env.GROQ_API_KEY;
+  }
+
+  private recordAdminMessage(entry: { chatId: string; username: string; content: string; type: 'sent' | 'received'; id?: string; timestamp?: string }): void {
+    const message = {
+      id: entry.id || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      timestamp: entry.timestamp || new Date().toISOString(),
+      chatId: entry.chatId,
+      username: entry.username,
+      content: entry.content,
+      type: entry.type,
+    };
+    this.adminMessages.unshift(message);
+    if (this.adminMessages.length > this.adminMessageLimit) {
+      this.adminMessages.pop();
+    }
+  }
+
+  getStatus(): { isRunning: boolean; botUsername: string; botId?: number; firstName?: string; subscriberCount: number } {
+    return {
+      isRunning: this.isRunning,
+      botUsername: this.botUsername,
+      botId: this.botId,
+      firstName: this.botFirstName,
+      subscriberCount: this.subscriptions.size,
+    };
+  }
+
+  getSubscribers(): UserSubscription[] {
+    return Array.from(this.subscriptions.values()).map(sub => ({
+      ...sub,
+      subscribedAt: new Date(sub.subscribedAt),
+    }));
+  }
+
+  getAdminMessages(): Array<{
+    id: string;
+    timestamp: string;
+    chatId: string;
+    username: string;
+    content: string;
+    type: 'sent' | 'received';
+  }> {
+    return [...this.adminMessages];
+  }
+
+  async sendAdminMessage(chatId: string, text: string): Promise<void> {
+    if (!this.bot || !this.isRunning) {
+      throw new Error('Telegram bot not running');
+    }
+    await this.bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+    this.recordAdminMessage({
+      chatId: chatId.toString(),
+      username: 'Admin',
+      content: text,
+      type: 'sent',
+    });
+  }
+
+  async broadcastAlert(message: string, alertType: keyof UserSubscription['alertTypes']): Promise<{ sent: number; failed: number }> {
+    if (!this.bot || !this.isRunning) {
+      throw new Error('Telegram bot not running');
+    }
+
+    const subscribers = this.getSubscribers().filter(sub => sub.isActive && sub.alertTypes[alertType]);
+    let sent = 0;
+    let failed = 0;
+
+    const tasks = subscribers.map(async sub => {
+      try {
+        await this.bot!.sendMessage(Number(sub.chatId), message, { parse_mode: 'Markdown' });
+        sent += 1;
+        this.recordAdminMessage({
+          chatId: sub.chatId,
+          username: 'Broadcast',
+          content: message,
+          type: 'sent',
+        });
+      } catch (err) {
+        failed += 1;
+        console.error(`[Telegram] Failed to broadcast to ${sub.chatId}:`, err);
+      }
+    });
+
+    await Promise.all(tasks);
+    return { sent, failed };
+  }
+
+  updateSubscriberStatus(chatId: string, isActive: boolean): UserSubscription | null {
+    const existing = this.subscriptions.get(chatId);
+    if (!existing) return null;
+    const updated = { ...existing, isActive };
+    this.subscriptions.set(chatId, updated);
+    return updated;
   }
 
   // ============================================
@@ -197,6 +308,8 @@ export class TelegramService {
       { command: 'unsubscribe', description: 'Unsubscribe from alerts' },
       { command: 'settings', description: 'Manage your notification settings' },
       { command: 'launch', description: 'Launch a token (manual trigger)' },
+      { command: 'groq', description: 'Start Groq AI conversation (admin only)' },
+      { command: 'groqok', description: 'Stop Groq AI conversation' },
     ]);
 
     // Register command handlers
@@ -209,6 +322,8 @@ export class TelegramService {
     this.bot.onText(/\/launch(.*)/, (msg: TelegramMessage, match: string[] | null): Promise<void> =>
       this.handleLaunchCommand(msg, match?.[1] || '')
     );
+    this.bot.onText(/\/groq/, (msg: TelegramMessage): Promise<void> => this.handleGroqStart(msg));
+    this.bot.onText(/\/groqok/, (msg: TelegramMessage): Promise<void> => this.handleGroqStop(msg));
 
     // Register callback query handler for buttons
     this.bot.on('callback_query', (query: CallbackQuery): Promise<void> => this.handleCallbackQuery(query));
@@ -246,6 +361,15 @@ Use the buttons below or type /help for commands.
     await this.bot.sendMessage(chatId, welcomeMessage, {
       parse_mode: 'Markdown',
       reply_markup: this.createMainMenuKeyboard(),
+    });
+
+    this.recordAdminMessage({
+      chatId: chatId.toString(),
+      username,
+      content: msg.text || 'start',
+      type: 'received',
+      id: msg.message_id.toString(),
+      timestamp: new Date(msg.date * 1000).toISOString(),
     });
   }
 
@@ -941,6 +1065,15 @@ ${signalData.content.substring(0, 500)}${signalData.content.length > 500 ? '...'
       metadata: { source: 'telegram', messageId: messageData.id },
     });
 
+    this.recordAdminMessage({
+      chatId: chatIdStr,
+      username: messageData.authorUsername,
+      content: messageData.content,
+      type: 'received',
+      id: messageData.id,
+      timestamp: messageData.createdAt.toISOString(),
+    });
+
     // Call handler if set
     if (this.onMessageHandler) {
       try {
@@ -1033,6 +1166,191 @@ ${signalData.content.substring(0, 500)}${signalData.content.length > 500 ? '...'
     };
   }
 
+  // ============================================
+  // GROQ AI CONVERSATION
+  // ============================================
+
+  /**
+   * Start Groq conversation with user
+   */
+  private async handleGroqStart(msg: TelegramMessage): Promise<void> {
+    if (!this.bot) return;
+
+    const chatIdStr = msg.chat.id.toString();
+    const userId = msg.from?.id.toString();
+
+    // Only allow specific admin user
+    const adminUserId = process.env.TELEGRAM_ADMIN_ID;
+    if (!adminUserId) {
+      await this.bot.sendMessage(msg.chat.id, '❌ Groq mode is disabled until TELEGRAM_ADMIN_ID is configured.');
+      return;
+    }
+    if (userId !== adminUserId) {
+      await this.bot.sendMessage(msg.chat.id, '❌ Groq mode is admin-only. Access denied.');
+      return;
+    }
+
+    if (!this.groqApiKey) {
+      await this.bot.sendMessage(msg.chat.id, '❌ Groq API key not configured.');
+      return;
+    }
+
+    // Initialize conversation for this chat
+    this.groqConversations.set(chatIdStr, {
+      active: true,
+      messages: [],
+    });
+    this.groqLastRequestAt.delete(chatIdStr);
+
+    await this.bot.sendMessage(
+      msg.chat.id,
+      `🤖 *Groq AI Mode Started*\n\n` +
+        `I'm now listening to your messages. Send any questions or requests.\n\n` +
+        `Type \`/groqok\` when done to exit.`,
+      { parse_mode: 'Markdown' }
+    );
+
+    console.log(`[Telegram] Groq mode started for chat ${chatIdStr}`);
+  }
+
+  /**
+   * Stop Groq conversation
+   */
+  private async handleGroqStop(msg: TelegramMessage): Promise<void> {
+    if (!this.bot) return;
+
+    const chatIdStr = msg.chat.id.toString();
+    this.groqConversations.delete(chatIdStr);
+
+    await this.bot.sendMessage(
+      msg.chat.id,
+      `✅ *Groq AI Mode Stopped*\n\nConversation ended.`,
+      { parse_mode: 'Markdown' }
+    );
+
+    console.log(`[Telegram] Groq mode stopped for chat ${chatIdStr}`);
+  }
+
+  /**
+   * Send message to Groq and get response
+   */
+  private async chatWithGroq(userMessage: string): Promise<string> {
+    if (!this.groqApiKey) {
+      throw new Error('Groq API key not configured');
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+
+    try {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.groqApiKey}`,
+        },
+        body: JSON.stringify({
+          model: this.groqModel,
+          temperature: 0.7,
+          max_tokens: 1024,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You are a helpful crypto trading assistant. ' +
+                'Provide concise, actionable advice about tokens, trading strategies, and market analysis. ' +
+                'Keep responses brief and to the point.',
+            },
+            {
+              role: 'user',
+              content: userMessage,
+            },
+          ],
+        }),
+        signal: controller.signal as any,
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Groq API error: ${response.status} - ${error}`);
+      }
+
+      const data: any = await response.json();
+      const content = data.choices?.[0]?.message?.content || 'No response generated';
+      return content;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  /**
+   * Handle Groq-mode messages
+   */
+  private async handleGroqMessage(msg: TelegramMessage): Promise<void> {
+    if (!this.bot || !msg.text) return;
+
+    const chatIdStr = msg.chat.id.toString();
+    const conversation = this.groqConversations.get(chatIdStr);
+
+    if (!conversation?.active) return;
+
+    try {
+      if (!this.groqApiKey) {
+        await this.bot.sendMessage(msg.chat.id, '❌ Groq API key not configured.');
+        return;
+      }
+
+      const now = Date.now();
+      const last = this.groqLastRequestAt.get(chatIdStr);
+      if (last && now - last < this.groqMinIntervalMs) {
+        await this.bot.sendMessage(msg.chat.id, '⏳ Please wait a moment before sending another prompt.');
+        return;
+      }
+
+      this.groqLastRequestAt.set(chatIdStr, now);
+
+      // Show typing indicator
+      await this.bot.sendChatAction(msg.chat.id, 'typing');
+
+      // Get Groq response
+      const response = await this.chatWithGroq(msg.text);
+
+      // Split long messages
+      const chunks = response.match(/[\s\S]{1,4096}/g) || [response];
+
+      for (const chunk of chunks) {
+        await this.bot.sendMessage(msg.chat.id, chunk, {
+          parse_mode: 'Markdown',
+        });
+      }
+
+      // Store in conversation history
+      conversation.messages.push(
+        { role: 'user', content: msg.text },
+        { role: 'assistant', content: response }
+      );
+
+      console.log(`[Telegram] Groq conversation in ${chatIdStr}`);
+
+      this.recordAdminMessage({
+        chatId: chatIdStr,
+        username: msg.from?.username || msg.from?.first_name || 'unknown',
+        content: msg.text,
+        type: 'received',
+        id: msg.message_id.toString(),
+        timestamp: new Date(msg.date * 1000).toISOString(),
+      });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      await this.bot.sendMessage(
+        msg.chat.id,
+        `❌ *Error:* ${errorMsg}\n\nType \`/groqok\` to exit Groq mode.`,
+        { parse_mode: 'Markdown' }
+      );
+      console.error('[Telegram] Groq error:', error);
+    }
+  }
+
   /**
    * Start the Telegram bot
    */
@@ -1061,6 +1379,16 @@ ${signalData.content.substring(0, 500)}${signalData.content.length > 500 ? '...'
 
       // Set up message handlers for alpha monitoring
       this.bot.on('message', async (msg: any) => {
+        const chatIdStr = msg.chat.id.toString();
+
+        // Check if in Groq mode
+        if (this.groqConversations.has(chatIdStr) && this.groqConversations.get(chatIdStr)?.active) {
+          if (!msg.text?.startsWith('/')) {
+            await this.handleGroqMessage(msg);
+          }
+          return;
+        }
+
         // Skip command messages from being processed as alpha signals
         if (msg.text?.startsWith('/')) return;
         await this.handleMessage(msg);
@@ -1090,6 +1418,8 @@ ${signalData.content.substring(0, 500)}${signalData.content.length > 500 ? '...'
       // Get bot info
       const botInfo = await this.bot.getMe();
       this.botUsername = botInfo.username || '';
+      this.botId = botInfo.id;
+      this.botFirstName = botInfo.first_name;
       console.log(`[Telegram] Bot logged in as @${botInfo.username}`);
       this.isRunning = true;
 

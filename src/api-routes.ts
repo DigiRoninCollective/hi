@@ -6,6 +6,7 @@ import { EventBus, EventType } from './events';
 import { ParsedLaunchCommand, getErrorMessage } from './types';
 import { ZkMixerService, ZkProofRequest } from './zk-mixer.service';
 import { GroqService } from './groq.service';
+import { TelegramService } from './telegram.service';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -35,6 +36,10 @@ import { getPlatformSettings, getLaunchPreferencesDb, listWalletPool } from './d
 import { decryptSecret } from './crypto.util';
 import bs58 from 'bs58';
 import { Keypair } from '@solana/web3.js';
+import { getLaunchCandidate, updateLaunchStatus } from './launch-cache';
+import { PumpPortalTradingService } from './pumpportal-trading.service';
+import { PumpPortalTradingManager, TradingWalletConfig } from './pumpportal-trading-manager';
+import { requireSTierHelper } from './route-helpers';
 
 // Fallback in-memory storage (when Supabase is not configured)
 interface CreatedToken {
@@ -79,16 +84,23 @@ export function createApiRoutes(
   pumpPortal: PumpPortalService | null,
   eventBus: EventBus,
   zkMixer?: ZkMixerService | null,
-  groqService?: GroqService | null
+  groqService?: GroqService | null,
+  telegramService?: TelegramService | null
 ): Router {
   const router = Router();
-  const requireSTier = (req: AuthenticatedRequest, res: Response): boolean => {
-    if (req.user?.role !== 'admin') {
-      res.status(403).json({ error: 'S-tier required' });
-      return false;
-    }
-    return true;
-  };
+  let tradingManager: PumpPortalTradingManager | null = null;
+  if (process.env.PUMPPORTAL_API_KEY) {
+    const tradingConfigs: TradingWalletConfig[] = [
+      {
+        id: 'default',
+        apiKey: process.env.PUMPPORTAL_API_KEY,
+        defaultSlippage: 10,
+        defaultPriorityFee: 0.0005,
+      },
+    ];
+    tradingManager = new PumpPortalTradingManager(tradingConfigs);
+  }
+  const requireSTier = requireSTierHelper();
 
   // Get wallet info
   router.get('/wallet', async (req: Request, res: Response): Promise<Response | void> => {
@@ -841,6 +853,448 @@ export function createApiRoutes(
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       res.status(500).json({ error: errorMessage });
     }
+  });
+
+  // Groq detailed analysis endpoint
+  router.post('/groq/analyze-detailed', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    if (!requireSTier(req, res)) return;
+    if (!groqService) {
+      return res.status(503).json({ error: 'Groq service not initialized' });
+    }
+
+    try {
+      const { text, tweetId, authorUsername, authorFollowers, authorVerified, urls, mediaUrls, language } = req.body;
+
+      if (!text || !authorUsername) {
+        return res.status(400).json({ error: 'text and authorUsername are required' });
+      }
+
+      const tweetData = {
+        id: tweetId || 'unknown',
+        text,
+        authorUsername,
+        authorId: 'unknown',
+        createdAt: new Date(),
+        urls,
+        mediaUrls,
+      };
+
+      const analysis = await groqService.analyzeTweetDetailed({
+        ...tweetData,
+        authorFollowers: authorFollowers ? Number(authorFollowers) : undefined,
+        authorVerified: Boolean(authorVerified),
+        language,
+      });
+
+      if (!analysis) {
+        return res.status(502).json({ error: 'Groq analysis failed' });
+      }
+
+      res.json({ success: true, analysis });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      res.status(500).json({ error: errorMessage });
+    }
+  });
+
+  // Analyze tweet for trading alerts and send Telegram notification
+  router.post('/groq/analyze-alert', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    if (!requireSTier(req, res)) return;
+    if (!groqService) {
+      return res.status(503).json({ error: 'Groq service not initialized' });
+    }
+
+    try {
+      const { text, tweetId, authorUsername, urls, mediaUrls, telegramService } = req.body;
+
+      if (!text) {
+        return res.status(400).json({ error: 'Tweet text is required' });
+      }
+
+      // Create TweetData object for Groq service
+      const tweetData = {
+        id: tweetId || 'unknown',
+        text,
+        authorUsername: authorUsername || 'unknown',
+        authorId: 'unknown',
+        createdAt: new Date(),
+        urls,
+        mediaUrls,
+      };
+
+      // Analyze tweet for alert worthiness
+      const analysis = await groqService.analyzeTweetForAlert(tweetData);
+
+      if (!analysis) {
+        return res.json({
+          success: true,
+          isAlert: false,
+          message: 'Tweet analyzed but no alert triggered',
+        });
+      }
+
+      // If it's an alert and Telegram service is passed, send notification
+      if (analysis.isAlert && analysis.confidence >= 0.6) {
+        // Format alert message
+        const sentimentEmoji = {
+          bullish: '🟢',
+          neutral: '🟡',
+          bearish: '🔴',
+        }[analysis.sentiment];
+
+        const alertMessage = `
+${sentimentEmoji} *Trading Alert Detected*
+
+*Author:* @${authorUsername}
+*Confidence:* ${(analysis.confidence * 100).toFixed(1)}%
+*Sentiment:* ${analysis.sentiment.toUpperCase()}
+
+*Reason:* ${analysis.reason}
+
+*Keywords:* ${analysis.keywords.length > 0 ? analysis.keywords.join(', ') : 'N/A'}
+
+*Tweet:* "${text.substring(0, 200)}${text.length > 200 ? '...' : ''}"
+
+${urls?.length ? `*Links:* ${urls.join(', ')}` : ''}
+        `.trim();
+
+        // Send to Telegram (if telegram service is available)
+        // This would be called from the frontend/Twitter feed with the telegram service
+        res.json({
+          success: true,
+          isAlert: true,
+          analysis,
+          alertMessage,
+          sent: false, // Would be true if telegram service was passed
+        });
+      } else {
+        res.json({
+          success: true,
+          isAlert: false,
+          analysis,
+          message: 'Tweet analyzed but confidence below threshold',
+        });
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      res.status(500).json({ error: errorMessage });
+    }
+  });
+
+  // ============================================
+  // TELEGRAM BOT ADMIN ROUTES
+  // ============================================
+
+  // Get bot status
+  router.get('/telegram/status', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    if (!requireSTier(req, res)) return;
+
+    if (!telegramService) {
+      return res.status(503).json({ error: 'Telegram service not initialized' });
+    }
+
+    const status = telegramService.getStatus();
+    res.json(status);
+  });
+
+  // Get subscribers
+  router.get('/telegram/subscribers', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    if (!requireSTier(req, res)) return;
+
+    if (!telegramService) {
+      return res.status(503).json({ error: 'Telegram service not initialized' });
+    }
+
+    const subscribers = telegramService.getSubscribers().map(sub => ({
+      ...sub,
+      subscribedAt: sub.subscribedAt.toISOString(),
+    }));
+    res.json({ subscribers });
+  });
+
+  // Get messages
+  router.get('/telegram/messages', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    if (!requireSTier(req, res)) return;
+
+    if (!telegramService) {
+      return res.status(503).json({ error: 'Telegram service not initialized' });
+    }
+
+    res.json({ messages: telegramService.getAdminMessages() });
+  });
+
+  // Send message to specific chat
+  router.post('/telegram/send-message', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    if (!requireSTier(req, res)) return;
+
+    if (!telegramService) {
+      return res.status(503).json({ error: 'Telegram service not initialized' });
+    }
+
+    try {
+      const { chatId, text } = req.body;
+
+      if (!chatId || !text) {
+        return res.status(400).json({ error: 'chatId and text are required' });
+      }
+
+      await telegramService.sendAdminMessage(String(chatId), String(text));
+      res.json({ success: true, message: `Message sent to ${chatId}` });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to send message' });
+    }
+  });
+
+  // Broadcast message to subscribers
+  router.post('/telegram/broadcast', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    if (!requireSTier(req, res)) return;
+
+    if (!telegramService) {
+      return res.status(503).json({ error: 'Telegram service not initialized' });
+    }
+
+    try {
+      const { message, alertType } = req.body;
+
+      if (!message || !alertType) {
+        return res.status(400).json({ error: 'message and alertType are required' });
+      }
+
+      if (!['tokenLaunches', 'highPrioritySignals', 'systemAlerts'].includes(alertType)) {
+        return res.status(400).json({ error: 'Invalid alertType' });
+      }
+
+      const result = await telegramService.broadcastAlert(String(message), alertType);
+      res.json({
+        success: true,
+        ...result,
+        message: `Broadcast sent to ${alertType} subscribers`,
+      });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to send broadcast' });
+    }
+  });
+
+  // Update subscriber status
+  router.put('/telegram/subscribers/:chatId', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    if (!requireSTier(req, res)) return;
+
+    if (!telegramService) {
+      return res.status(503).json({ error: 'Telegram service not initialized' });
+    }
+
+    try {
+      const { chatId } = req.params;
+      const { isActive } = req.body;
+
+      if (typeof isActive !== 'boolean') {
+        return res.status(400).json({ error: 'isActive must be boolean' });
+      }
+
+      const updated = telegramService.updateSubscriberStatus(chatId, isActive);
+      if (!updated) {
+        return res.status(404).json({ error: 'Subscriber not found' });
+      }
+
+      res.json({
+        success: true,
+        message: `Subscriber ${chatId} updated`,
+        isActive: updated.isActive,
+      });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to update subscriber' });
+    }
+  });
+
+  // ============================================
+  // MANUAL LAUNCH CONTROL
+  // ============================================
+
+  // Trigger launch from cached candidate (semi-auto mode)
+  router.post('/launch/from-candidate/:tweetId', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    if (!requireSTier(req, res)) return;
+    if (!pumpPortal) {
+      return res.status(503).json({ error: 'PumpPortal service not initialized' });
+    }
+
+    const tweetId = req.params.tweetId;
+    const cached = getLaunchCandidate(tweetId);
+    if (!cached) {
+      return res.status(404).json({ error: 'Launch candidate not found' });
+    }
+
+    if (cached.status === 'launched') {
+      return res.status(400).json({ error: 'Candidate already launched' });
+    }
+
+    const { candidate, command } = cached;
+    const deployTicker = candidate.analysis.tokenTicker || command.ticker;
+    const deployName = candidate.analysis.tokenName || command.name;
+
+    try {
+      updateLaunchStatus(tweetId, 'queued');
+      eventBus.emit(EventType.TWEET_CLASSIFIED, {
+        tweetId,
+        authorUsername: candidate.authorHandle,
+        text: candidate.tweetText,
+        classification: undefined,
+        analysis: candidate.analysis,
+        launchStatus: 'queued',
+      });
+
+      const result = await pumpPortal.createToken(
+        { ...command, ticker: deployTicker, name: deployName },
+        (command as any).zkProof,
+        (command as any).zkPublicSignals
+      );
+
+      updateLaunchStatus(tweetId, 'launched');
+
+      eventBus.emit(EventType.TOKEN_CREATED, {
+        ticker: deployTicker,
+        name: deployName,
+        mint: result.mint,
+        signature: result.signature,
+      });
+
+      res.json({
+        success: true,
+        ticker: deployTicker,
+        name: deployName,
+        mint: result.mint,
+        signature: result.signature,
+      });
+    } catch (error) {
+      updateLaunchStatus(tweetId, 'failed');
+      eventBus.emit(EventType.TOKEN_FAILED, {
+        ticker: deployTicker,
+        name: deployName,
+        error: String(error),
+      });
+      res.status(500).json({ error: 'Failed to launch token', details: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // Skip candidate manually
+  router.post('/launch/skip/:tweetId', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    if (!requireSTier(req, res)) return;
+
+    const tweetId = req.params.tweetId;
+    const cached = getLaunchCandidate(tweetId);
+    if (!cached) {
+      return res.status(404).json({ error: 'Launch candidate not found' });
+    }
+
+    updateLaunchStatus(tweetId, 'skipped-manual');
+
+    eventBus.emit(EventType.TWEET_CLASSIFIED, {
+      tweetId,
+      authorUsername: cached.candidate.authorHandle,
+      text: cached.candidate.tweetText,
+      classification: undefined,
+      analysis: cached.candidate.analysis,
+      launchStatus: 'skipped-manual',
+    });
+
+    res.json({ success: true, status: 'skipped' });
+  });
+
+  // Collect creator fee via PumpPortal
+  router.post('/pumpportal/collect-fee', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    if (!requireSTier(req, res)) return;
+    if (!pumpPortal) {
+      return res.status(503).json({ error: 'PumpPortal service not initialized' });
+    }
+
+    try {
+      const { pool, mint, priorityFee } = req.body;
+      const result = await pumpPortal.collectCreatorFee({ pool, mint, priorityFee });
+      res.json({ success: true, signature: result.signature });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to collect creator fee' });
+    }
+  });
+
+  // Hosted buy via PumpPortal
+  router.post('/pumpportal/buy-hosted', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    if (!requireSTier(req, res)) return;
+    if (!tradingManager) {
+      return res.status(503).json({ error: 'PumpPortal trading service not initialized' });
+    }
+
+    try {
+      const { mint, amountSol, slippage, priorityFee, pool, walletId } = req.body;
+      if (!mint || !amountSol) {
+        return res.status(400).json({ error: 'mint and amountSol are required' });
+      }
+
+      const maxSol = Number(process.env.PUMPPORTAL_MAX_SOL_PER_TRADE || '2');
+      if (Number(amountSol) > maxSol) {
+        return res.status(400).json({ error: `amountSol too high. Max per trade: ${maxSol} SOL` });
+      }
+
+      const walletKey = walletId || 'default';
+      if (!tradingManager.hasWallet(walletKey)) {
+        return res.status(400).json({ error: `Unknown wallet: ${walletKey}` });
+      }
+      const svc = tradingManager.getWallet(walletKey);
+      const signature = await svc.buyToken({
+        mint: String(mint),
+        amountSol: Number(amountSol),
+        slippageBps: slippage !== undefined ? Number(slippage) : undefined,
+        priorityFee: priorityFee !== undefined ? Number(priorityFee) : undefined,
+        pool,
+      });
+      res.json({ success: true, signature, walletId: walletKey });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to submit buy' });
+    }
+  });
+
+  // Hosted sell via PumpPortal
+  router.post('/pumpportal/sell-hosted', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    if (!requireSTier(req, res)) return;
+    if (!tradingManager) {
+      return res.status(503).json({ error: 'PumpPortal trading service not initialized' });
+    }
+
+    try {
+      const { mint, tokenAmount, slippage, priorityFee, pool, walletId } = req.body;
+      if (!mint || !tokenAmount) {
+        return res.status(400).json({ error: 'mint and tokenAmount are required' });
+      }
+
+      const maxTokens = Number(process.env.PUMPPORTAL_MAX_TOKEN_AMOUNT || '100000000');
+      if (Number(tokenAmount) > maxTokens) {
+        return res.status(400).json({ error: `tokenAmount too high. Max per trade: ${maxTokens}` });
+      }
+
+      const walletKey = walletId || 'default';
+      if (!tradingManager.hasWallet(walletKey)) {
+        return res.status(400).json({ error: `Unknown wallet: ${walletKey}` });
+      }
+      const svc = tradingManager.getWallet(walletKey);
+      const signature = await svc.sellToken({
+        mint: String(mint),
+        tokenAmount: Number(tokenAmount),
+        slippageBps: slippage !== undefined ? Number(slippage) : undefined,
+        priorityFee: priorityFee !== undefined ? Number(priorityFee) : undefined,
+        pool,
+      });
+      res.json({ success: true, signature, walletId: walletKey });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to submit sell' });
+    }
+  });
+
+  // List trading wallets (admin)
+  router.get('/pumpportal/wallets', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    if (!requireSTier(req, res)) return;
+    if (!tradingManager) {
+      return res.json({ wallets: [] });
+    }
+
+    res.json({ wallets: tradingManager.listWallets() });
   });
 
   return router;

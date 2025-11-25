@@ -1,5 +1,6 @@
 import EventEmitter from 'eventemitter3';
 import { v4 as uuidv4 } from 'uuid';
+import { GroqAnalysisResult } from './types';
 
 // Event types for the system
 export enum EventType {
@@ -52,6 +53,10 @@ export interface TweetEvent extends BaseEvent {
     authorUsername: string;
     text: string;
     classification?: ClassificationResult;
+    analysis?: GroqAnalysisResult;
+    launchStatus?: string;
+    urls?: string[];
+    mediaUrls?: string[];
   };
 }
 

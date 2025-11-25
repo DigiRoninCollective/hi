@@ -117,6 +117,10 @@ export class AlphaAggregatorService {
     }
   }
 
+  getTelegramService(): TelegramService | null {
+    return this.telegramService;
+  }
+
   /**
    * Set handler for classified signals
    */

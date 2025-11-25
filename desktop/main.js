@@ -2,23 +2,42 @@ const { app, BrowserWindow, nativeTheme, shell, ipcMain } = require('electron');
 const path = require('path');
 const isDev = process.argv.includes('dev');
 
+let mainWindow = null;
+
 function createWindow() {
-  const win = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1320,
     height: 900,
     backgroundColor: '#0d0d0d',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
     },
   });
 
   if (isDev) {
-    win.loadURL('http://localhost:5173');
-    win.webContents.openDevTools({ mode: 'detach' });
+    mainWindow.loadURL('http://localhost:5173');
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
     const indexPath = path.join(__dirname, '..', 'web', 'dist', 'index.html');
-    win.loadFile(indexPath);
+    mainWindow.loadFile(indexPath);
   }
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http')) {
+      shell.openExternal(url);
+      return { action: 'deny' };
+    }
+    return { action: 'allow' };
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url.startsWith('http')) {
+      event.preventDefault();
+      shell.openExternal(url);
+    }
+  });
 }
 
 app.whenReady().then(() => {
@@ -26,6 +45,27 @@ app.whenReady().then(() => {
   createWindow();
 
   ipcMain.handle('open-external', (_event, url) => shell.openExternal(url));
+
+  // Navigation handlers
+  ipcMain.handle('go-back', () => {
+    if (mainWindow && mainWindow.webContents.canGoBack()) {
+      mainWindow.webContents.goBack();
+    }
+  });
+
+  ipcMain.handle('go-forward', () => {
+    if (mainWindow && mainWindow.webContents.canGoForward()) {
+      mainWindow.webContents.goForward();
+    }
+  });
+
+  ipcMain.handle('can-go-back', () => {
+    return mainWindow ? mainWindow.webContents.canGoBack() : false;
+  });
+
+  ipcMain.handle('can-go-forward', () => {
+    return mainWindow ? mainWindow.webContents.canGoForward() : false;
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

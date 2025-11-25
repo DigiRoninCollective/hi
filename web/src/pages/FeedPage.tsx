@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+
 import {
   MessageSquare,
   Rocket,
@@ -18,6 +19,7 @@ import {
   ArrowLeft,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import { openExternal } from '../utils/electron'
 
 interface FeedEvent {
   id: string
@@ -25,6 +27,30 @@ interface FeedEvent {
   timestamp: string
   data: Record<string, any>
 }
+
+interface GroqAnalysis {
+  shouldLaunch: boolean
+  confidence: number
+  score1to10: number
+  reason: string
+  tokenName: string
+  tokenTicker: string
+  theme: string
+  tone: string
+  keywordsDetected?: string[]
+  riskFlags?: string[]
+  nsfwOrSensitive?: boolean
+}
+
+type LaunchStatus =
+  | 'candidate'
+  | 'queued'
+  | 'launched'
+  | 'skipped-classifier'
+  | 'skipped-policy'
+  | 'skipped-manual'
+  | 'analysis-missing'
+  | 'failed'
 
 interface FilterState {
   tweets: boolean
@@ -53,6 +79,36 @@ interface LaunchPreferences {
   autoTopUp: boolean
   minBalance: number
   topUpAmount: number
+}
+
+interface GroqAnalysis {
+  shouldLaunch: boolean
+  confidence: number
+  score1to10: number
+  reason: string
+  tokenName: string
+  tokenTicker: string
+  theme: string
+  tone: string
+  keywordsDetected?: string[]
+  riskFlags?: string[]
+  nsfwOrSensitive?: boolean
+}
+
+type LaunchStatus =
+  | 'candidate'
+  | 'queued'
+  | 'launched'
+  | 'skipped-classifier'
+  | 'skipped-policy'
+  | 'skipped-manual'
+  | 'analysis-missing'
+  | 'failed'
+
+interface ConfigInfo {
+  mode: string
+  seedBuyEnabled: boolean
+  tradingWalletOverrides: string
 }
 
 interface GroqSuggestion {
@@ -128,8 +184,10 @@ const demoEvents: FeedEvent[] = [
 
 export default function FeedPage() {
   const navigate = useNavigate()
+
   const { isAuthenticated } = useAuth()
   const [events, setEvents] = useState<FeedEvent[]>([])
+  const [ignoredEventIds, setIgnoredEventIds] = useState<Set<string>>(new Set())
   const [connected, setConnected] = useState(false)
   const [notifications, setNotifications] = useState(true)
   const [filters, setFilters] = useState<FilterState>({
@@ -161,8 +219,10 @@ export default function FeedPage() {
   })
   const [savingPrefs, setSavingPrefs] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [candidateActionLoading, setCandidateActionLoading] = useState<string | null>(null)
   const [groqSuggestions, setGroqSuggestions] = useState<Record<string, GroqSuggestion[]>>({})
   const [loadingSuggestions, setLoadingSuggestions] = useState<Record<string, boolean>>({})
+  const [configInfo, setConfigInfo] = useState<ConfigInfo | null>(null)
   const { user } = useAuth()
   const [poolKeys, setPoolKeys] = useState<{ id: string; public_key: string; created_at: string }[]>([])
   const [poolLoading, setPoolLoading] = useState(false)
@@ -184,6 +244,9 @@ export default function FeedPage() {
     if (!demoMode) {
       connectToStream()
     }
+
+    // Load config banner info
+    fetchConfigInfo()
 
     // Load initial events
     if (!demoMode) {
@@ -290,6 +353,18 @@ export default function FeedPage() {
       }
     } catch (err) {
       console.error('Failed to load events:', err)
+    }
+  }
+
+  const fetchConfigInfo = async () => {
+    try {
+      const res = await fetch('/api/config/mode', { credentials: 'include' })
+      if (res.ok) {
+        const data = await res.json()
+        setConfigInfo(data)
+      }
+    } catch {
+      // ignore
     }
   }
 
@@ -510,6 +585,15 @@ export default function FeedPage() {
     switch (event.type) {
       case 'tweet_received':
         return `@${data.authorUsername}: ${data.text?.slice(0, 100)}...`
+      case 'tweet_classified': {
+        const analysis = data.analysis as GroqAnalysis | undefined
+        const base = `@${data.authorUsername}: ${data.text?.slice(0, 80)}...`
+        if (!analysis) return base
+        const parts = [`Score ${analysis.score1to10}/10`]
+        if (analysis.tokenTicker) parts.push(`$${analysis.tokenTicker}`)
+        if (analysis.theme) parts.push(analysis.theme)
+        return `${base} (${parts.join(' • ')})`
+      }
       case 'token_created':
         return `${data.ticker} (${data.name}) - ${data.mint?.slice(0, 8)}...`
       case 'token_failed':
@@ -579,7 +663,12 @@ export default function FeedPage() {
     }
   }
 
+  const handleIgnoreEvent = (eventId: string) => {
+    setIgnoredEventIds((prev) => new Set([...prev, eventId]))
+  }
+
   const shouldShowEvent = (event: FeedEvent): boolean => {
+    if (ignoredEventIds.has(event.id)) return false
     if (event.type.startsWith('tweet_') && !filters.tweets) return false
     if ((event.type.includes('launch') || event.type.includes('token')) && !filters.launches)
       return false
@@ -652,6 +741,103 @@ export default function FeedPage() {
       alert(err.message || 'Sell failed')
     } finally {
       setActionLoading(null)
+    }
+  }
+
+  const getLaunchStatusLabel = (status?: LaunchStatus) => {
+    switch (status) {
+      case 'candidate':
+        return 'Candidate'
+      case 'queued':
+        return 'Queued'
+      case 'launched':
+        return 'Launched'
+      case 'skipped-classifier':
+        return 'Skipped (Classifier)'
+      case 'skipped-policy':
+        return 'Skipped (Policy)'
+      case 'skipped-manual':
+        return 'Skipped (Manual)'
+      case 'analysis-missing':
+        return 'Analysis Missing'
+      case 'failed':
+        return 'Failed'
+      default:
+        return ''
+    }
+  }
+
+  const getLaunchStatusClass = (status?: LaunchStatus) => {
+    switch (status) {
+      case 'candidate':
+        return 'text-yellow-300 bg-yellow-500/10 border-yellow-500/30'
+      case 'queued':
+        return 'text-blue-300 bg-blue-500/10 border-blue-500/30'
+      case 'launched':
+        return 'text-green-300 bg-green-500/10 border-green-500/30'
+      case 'skipped-classifier':
+      case 'skipped-policy':
+      case 'skipped-manual':
+        return 'text-gray-300 bg-gray-600/30 border-gray-500/40'
+      case 'analysis-missing':
+        return 'text-purple-200 bg-purple-500/10 border-purple-500/30'
+      case 'failed':
+        return 'text-red-300 bg-red-500/10 border-red-500/30'
+      default:
+        return 'text-gray-300 bg-dark-600 border-dark-500'
+    }
+  }
+
+  const triggerManualLaunch = async (event: FeedEvent) => {
+    if (user?.role !== 'admin') {
+      alert('S-tier required')
+      return
+    }
+    const tweetId = event.data?.tweetId
+    if (!tweetId) {
+      alert('Missing tweetId for candidate')
+      return
+    }
+    setCandidateActionLoading(event.id)
+    try {
+      const res = await fetch(`/api/launch/from-candidate/${tweetId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Launch failed')
+      alert(`Launch dispatched: ${data.ticker} (${data.name})`)
+    } catch (err: any) {
+      alert(err.message || 'Launch failed')
+    } finally {
+      setCandidateActionLoading(null)
+    }
+  }
+
+  const triggerManualSkip = async (event: FeedEvent) => {
+    if (user?.role !== 'admin') {
+      alert('S-tier required')
+      return
+    }
+    const tweetId = event.data?.tweetId
+    if (!tweetId) {
+      alert('Missing tweetId for candidate')
+      return
+    }
+    setCandidateActionLoading(event.id)
+    try {
+      const res = await fetch(`/api/launch/skip/${tweetId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Skip failed')
+    } catch (err: any) {
+      alert(err.message || 'Skip failed')
+    } finally {
+      setCandidateActionLoading(null)
     }
   }
 
@@ -796,7 +982,7 @@ export default function FeedPage() {
       <div className="flex-1 bg-dark-800 rounded-xl border border-dark-600 flex flex-col">
         {/* Feed Header */}
         <div className="flex items-center justify-between p-4 border-b border-dark-600">
-          <h2 className="font-semibold flex items-center gap-2">
+          <div className="flex items-center gap-2">
             <button
               onClick={() => navigate(-1)}
               className="p-2 hover:bg-dark-700 rounded-lg transition-colors"
@@ -804,10 +990,29 @@ export default function FeedPage() {
             >
               <ArrowLeft className="w-5 h-5 text-gray-400 hover:text-white" />
             </button>
-            <MessageSquare className="w-5 h-5 text-accent-green" />
-            Live Feed
-            <span className="text-sm text-gray-500">({filteredEvents.length} events)</span>
-          </h2>
+            <h2 className="font-semibold flex items-center gap-2">
+              <MessageSquare className="w-5 h-5 text-accent-green" />
+              Live Feed
+              <span className="text-sm text-gray-500">({filteredEvents.length} events)</span>
+            </h2>
+          </div>
+
+          {configInfo && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="px-2 py-1 rounded-full bg-dark-700 border border-dark-500 text-gray-300">
+                Mode: {configInfo.mode}
+              </span>
+              <span
+                className={`px-2 py-1 rounded-full border ${
+                  configInfo.seedBuyEnabled
+                    ? 'bg-green-500/10 border-green-500/30 text-green-300'
+                    : 'bg-dark-700 border-dark-500 text-gray-400'
+                }`}
+              >
+                Seed Buy: {configInfo.seedBuyEnabled ? 'On' : 'Off'}
+              </span>
+            </div>
+          )}
 
           <div className="flex items-center gap-2">
             <button
@@ -914,35 +1119,34 @@ export default function FeedPage() {
                     {/* Extra info for token events */}
                     {event.type === 'token_created' && event.data.mint && (
                       <div className="mt-2 flex gap-2">
-                        <a
-                          href={`https://pump.fun/${event.data.mint}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => openExternal(`https://pump.fun/${event.data.mint}`)}
                           className="text-xs text-accent-green hover:underline flex items-center gap-1"
                         >
                           PumpFun <ExternalLink className="w-3 h-3" />
-                        </a>
-                        <a
-                          href={`https://solscan.io/token/${event.data.mint}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openExternal(`https://solscan.io/token/${event.data.mint}`)}
                           className="text-xs text-blue-400 hover:underline flex items-center gap-1"
                         >
                           Solscan <ExternalLink className="w-3 h-3" />
-                        </a>
+                        </button>
                       </div>
                     )}
 
                     {/* Tweet link */}
                     {event.type === 'tweet_received' && event.data.tweetId && (
-                      <a
-                        href={`https://twitter.com/${event.data.authorUsername}/status/${event.data.tweetId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openExternal(`https://twitter.com/${event.data.authorUsername}/status/${event.data.tweetId}`)
+                        }
                         className="mt-2 text-xs text-blue-400 hover:underline flex items-center gap-1 inline-flex"
                       >
                         View Tweet <ExternalLink className="w-3 h-3" />
-                      </a>
+                      </button>
                     )}
 
                     {/* Tweet metadata */}
@@ -971,6 +1175,82 @@ export default function FeedPage() {
                         )}
                       </div>
                     )}
+
+                    {event.type === 'tweet_classified' && event.data.analysis && (
+                      <div className="mt-3 rounded-lg border border-dark-600 bg-dark-800 p-3 space-y-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {event.data.launchStatus && (
+                            <span className={`text-xs px-2 py-1 rounded-full border ${getLaunchStatusClass(event.data.launchStatus as LaunchStatus)}`}>
+                              {getLaunchStatusLabel(event.data.launchStatus)}
+                            </span>
+                          )}
+                          <span className="text-xs px-2 py-1 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-200">
+                            Score {event.data.analysis.score1to10}/10
+                          </span>
+                          <span className="text-xs px-2 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-200">
+                            {event.data.analysis.theme}
+                          </span>
+                          <span className="text-xs px-2 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-200">
+                            {event.data.analysis.tone}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="font-semibold text-white">
+                            {event.data.analysis.tokenName}
+                          </span>
+                          <span className="text-accent-green font-mono text-xs">
+                            ${event.data.analysis.tokenTicker}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap text-xs">
+                          {event.data.analysis.nsfwOrSensitive && (
+                            <span className="px-2 py-1 rounded-full bg-red-500/10 text-red-300 border border-red-500/30">
+                              NSFW / Sensitive
+                            </span>
+                          )}
+                          {(event.data.analysis.riskFlags || []).map((flag: string) => (
+                            <span key={flag} className="px-2 py-1 rounded-full bg-yellow-500/10 text-yellow-200 border border-yellow-500/30">
+                              {flag}
+                            </span>
+                          ))}
+                          {(!event.data.analysis.riskFlags || event.data.analysis.riskFlags.length === 0) &&
+                            !event.data.analysis.nsfwOrSensitive && (
+                              <span className="px-2 py-1 rounded-full bg-green-500/10 text-green-200 border border-green-500/30">
+                                No critical risk flags
+                              </span>
+                            )}
+                        </div>
+                        <p className="text-xs text-gray-300 leading-relaxed">
+                          {event.data.analysis.reason}
+                        </p>
+                      </div>
+                    )}
+
+                    {event.type === 'tweet_classified' &&
+                      user?.role === 'admin' &&
+                      event.data.launchStatus === 'candidate' && (
+                        <div className="mt-3 flex items-center gap-2 text-xs flex-wrap">
+                          <button
+                            disabled={candidateActionLoading === event.id}
+                            onClick={() => triggerManualLaunch(event)}
+                            className="px-3 py-1 rounded-full bg-accent-green/10 text-accent-green border border-accent-green/30 hover:bg-accent-green/20 transition-colors disabled:opacity-50 flex items-center gap-1"
+                          >
+                            {candidateActionLoading === event.id ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              '🚀'
+                            )}
+                            Launch
+                          </button>
+                          <button
+                            disabled={candidateActionLoading === event.id}
+                            onClick={() => triggerManualSkip(event)}
+                            className="px-3 py-1 rounded-full bg-red-500/10 text-red-300 border border-red-500/30 hover:bg-red-500/20 transition-colors disabled:opacity-50 flex items-center gap-1"
+                          >
+                            Skip
+                          </button>
+                        </div>
+                      )}
 
                     {/* Quick actions */}
                     {(event.type === 'tweet_received' ||
@@ -1006,7 +1286,10 @@ export default function FeedPage() {
                           >
                             Buy with {prefs.initialBuySol} SOL
                           </button>
-                          <button className="px-3 py-1 rounded-full bg-dark-600 text-gray-300 border border-dark-500 hover:bg-dark-500 transition-colors">
+                          <button
+                            onClick={() => handleIgnoreEvent(event.id)}
+                            className="px-3 py-1 rounded-full bg-dark-600 text-gray-300 border border-dark-500 hover:bg-dark-500 transition-colors"
+                          >
                             Ignore
                           </button>
                         </div>

@@ -46,10 +46,31 @@ export class PumpPortalService {
   }
 
   /**
+   * Transfer SOL from the primary wallet
+   */
+  async transferSol(to: string, amountSol: number): Promise<string> {
+    const tx = new (await import('@solana/web3.js')).Transaction().add(
+      (await import('@solana/web3.js')).SystemProgram.transfer({
+        fromPubkey: this.wallet.publicKey,
+        toPubkey: new (await import('@solana/web3.js')).PublicKey(to),
+        lamports: amountSol * LAMPORTS_PER_SOL,
+      })
+    );
+    const sig = await this.connection.sendTransaction(tx, [this.wallet], { skipPreflight: false });
+    await this.connection.confirmTransaction(sig, 'confirmed');
+    return sig;
+  }
+
+  /**
    * Get wallet SOL balance
    */
   async getBalance(): Promise<number> {
     const balance = await this.connection.getBalance(this.wallet.publicKey);
+    return balance / LAMPORTS_PER_SOL;
+  }
+
+  async getBalanceFor(pubkey: string): Promise<number> {
+    const balance = await this.connection.getBalance(new (await import('@solana/web3.js')).PublicKey(pubkey));
     return balance / LAMPORTS_PER_SOL;
   }
 
@@ -271,6 +292,129 @@ export class PumpPortalService {
   }
 
   /**
+   * Collect creator fees via PumpPortal hosted API (no local signing required)
+   */
+  async collectCreatorFee(options?: { pool?: 'pump' | 'meteora-dbc'; mint?: string; priorityFee?: number }): Promise<{ signature: string }> {
+    const apiKey = process.env.PUMPPORTAL_API_KEY;
+    if (!apiKey) {
+      throw new Error('PUMPPORTAL_API_KEY is not configured');
+    }
+
+    const pool = options?.pool || 'pump';
+    const priorityFee = options?.priorityFee ?? 0.000001;
+
+    const response = await fetch(`${PUMPPORTAL_API_URL}/trade?api-key=${apiKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'collectCreatorFee',
+        priorityFee,
+        pool,
+        mint: options?.mint,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      throw new Error(`PumpPortal collectCreatorFee failed: ${response.status} - ${err}`);
+    }
+
+    const data = await response.json() as { signature?: string; error?: string };
+    if (!data.signature) {
+      throw new Error(`PumpPortal collectCreatorFee missing signature: ${JSON.stringify(data)}`);
+    }
+
+    return { signature: data.signature };
+  }
+
+  /**
+   * Hosted buy via PumpPortal API (no local signing). Denominated in SOL.
+   */
+  async buyHosted(params: {
+    mint: string;
+    amountSol: number;
+    slippage?: number;
+    priorityFee?: number;
+    pool?: 'pump' | 'meteora-dbc';
+  }): Promise<{ signature: string }> {
+    const apiKey = process.env.PUMPPORTAL_API_KEY;
+    if (!apiKey) {
+      throw new Error('PUMPPORTAL_API_KEY is not configured');
+    }
+
+    const response = await fetch(`${PUMPPORTAL_API_URL}/trade?api-key=${apiKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'buy',
+        mint: params.mint,
+        denominatedInSol: 'true',
+        amount: params.amountSol,
+        slippage: params.slippage ?? 10,
+        priorityFee: params.priorityFee ?? 0.0005,
+        pool: params.pool || 'pump',
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      throw new Error(`PumpPortal buyHosted failed: ${response.status} - ${err}`);
+    }
+
+    const data = (await response.json()) as { signature?: string; error?: string };
+    if (!data.signature) {
+      throw new Error(`PumpPortal buyHosted missing signature: ${JSON.stringify(data)}`);
+    }
+    return { signature: data.signature };
+  }
+
+  /**
+   * Hosted sell via PumpPortal API (no local signing). Denominated in tokens.
+   */
+  async sellHosted(params: {
+    mint: string;
+    tokenAmount: number;
+    slippage?: number;
+    priorityFee?: number;
+    pool?: 'pump' | 'meteora-dbc';
+  }): Promise<{ signature: string }> {
+    const apiKey = process.env.PUMPPORTAL_API_KEY;
+    if (!apiKey) {
+      throw new Error('PUMPPORTAL_API_KEY is not configured');
+    }
+
+    const response = await fetch(`${PUMPPORTAL_API_URL}/trade?api-key=${apiKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'sell',
+        mint: params.mint,
+        tokenAmount: params.tokenAmount,
+        slippage: params.slippage ?? 10,
+        priorityFee: params.priorityFee ?? 0.0005,
+        pool: params.pool || 'pump',
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      throw new Error(`PumpPortal sellHosted failed: ${response.status} - ${err}`);
+    }
+
+    const data = (await response.json()) as { signature?: string; error?: string };
+    if (!data.signature) {
+      throw new Error(`PumpPortal sellHosted missing signature: ${JSON.stringify(data)}`);
+    }
+    return { signature: data.signature };
+  }
+
+  /**
    * Sell tokens on PumpFun
    */
   async sellToken(mintAddress: string, tokenAmount: number, zkProof?: Uint8Array, zkPublicSignals?: ZkProofRequest['publicSignals']): Promise<string> {
@@ -306,6 +450,70 @@ export class PumpPortalService {
     const signature = await this.sendAndConfirm(transaction, [this.wallet]);
 
     console.log(`Sell transaction confirmed: ${signature}`);
+    return signature;
+  }
+
+  /**
+   * Buy using a provided wallet (multi-wallet mode)
+   */
+  async buyTokenWithWallet(wallet: Keypair, mintAddress: string, solAmount: number): Promise<string> {
+    const response = await fetch(`${PUMPPORTAL_API_URL}/trade-local`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        publicKey: wallet.publicKey.toBase58(),
+        action: 'buy',
+        mint: mintAddress,
+        denominatedInSol: 'true',
+        amount: solAmount,
+        slippage: 10,
+        priorityFee: 0.0005,
+        pool: 'pump',
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`PumpPortal API error: ${response.status} - ${errorText}`);
+    }
+
+    const transactionData = await response.arrayBuffer();
+    const transaction = VersionedTransaction.deserialize(new Uint8Array(transactionData));
+    const signature = await this.sendAndConfirm(transaction, [wallet]);
+    return signature;
+  }
+
+  /**
+   * Sell using a provided wallet (multi-wallet mode)
+   */
+  async sellTokenWithWallet(wallet: Keypair, mintAddress: string, tokenAmount: number): Promise<string> {
+    const response = await fetch(`${PUMPPORTAL_API_URL}/trade-local`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        publicKey: wallet.publicKey.toBase58(),
+        action: 'sell',
+        mint: mintAddress,
+        denominatedInSol: 'false',
+        amount: tokenAmount,
+        slippage: 10,
+        priorityFee: 0.0005,
+        pool: 'pump',
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`PumpPortal API error: ${response.status} - ${errorText}`);
+    }
+
+    const transactionData = await response.arrayBuffer();
+    const transaction = VersionedTransaction.deserialize(new Uint8Array(transactionData));
+    const signature = await this.sendAndConfirm(transaction, [wallet]);
     return signature;
   }
 }

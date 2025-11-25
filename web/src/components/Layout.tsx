@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
-import { Rocket, Home, Zap, MessageSquare, Settings, LogOut, LogIn, TrendingUp, LayoutDashboard } from 'lucide-react'
+import { Rocket, Home, Zap, MessageSquare, Settings, LogOut, LogIn, TrendingUp, LayoutDashboard, MessageCircle, HelpCircle } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
 
@@ -49,6 +49,8 @@ export default function Layout() {
     { path: '/feed', label: 'Feed', icon: MessageSquare },
     { path: '/alpha', label: 'Alpha', icon: TrendingUp },
     { path: '/settings', label: 'Settings', icon: Settings },
+    { path: '/telegram-admin', label: 'Telegram', icon: MessageCircle, adminOnly: true },
+    { path: '/help', label: 'Help', icon: HelpCircle },
   ]
 
   return (
@@ -65,7 +67,11 @@ export default function Layout() {
 
             {/* Navigation */}
             <nav className="flex items-center gap-1">
-              {navItems.map((item) => {
+              {navItems.map((item: any) => {
+                // Skip admin-only items if user is not admin
+                if (item.adminOnly && user?.role !== 'admin') {
+                  return null
+                }
                 const Icon = item.icon
                 const isActive = location.pathname === item.path
                 return (

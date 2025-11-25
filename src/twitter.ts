@@ -1,6 +1,7 @@
 import { TwitterApi, TweetStream, ETwitterStreamEvent, TweetV2SingleStreamResult } from 'twitter-api-v2';
 import { TwitterConfig, TweetData, LaunchEventHandler } from './types';
 import { GroqService } from './groq.service';
+import { sendTelegramAlert } from './telegram-alert';
 
 export class TwitterStreamService {
   private client: TwitterApi;
@@ -137,7 +138,9 @@ export class TwitterStreamService {
       authorUsername: tweet.includes?.users?.[0]?.username || 'unknown',
       createdAt: new Date(tweet.data.created_at || Date.now()),
       urls: tweet.data?.entities?.urls?.map(u => u.expanded_url).filter(Boolean) as string[] | undefined,
-      mediaUrls: tweet.includes?.media?.map(m => m.url || m.preview_image_url).filter(Boolean) as string[] | undefined,
+      mediaUrls: tweet.includes?.media
+        ?.map(m => m.url || m.preview_image_url)
+        .filter(Boolean) as string[] | undefined,
     };
 
     console.log(`\n[Tweet Received] @${tweetData.authorUsername}:`);
@@ -153,20 +156,71 @@ export class TwitterStreamService {
     }
 
     // Fall back to Groq suggestions when no command is detected
-    if (commands.length === 0 && this.groqService) {
-      const suggestions = await this.groqService.suggestLaunchCommands(tweetData);
-      if (suggestions.length > 0) {
-        for (const suggestion of suggestions) {
+    let groqSuggestions: any[] = [];
+    if (this.groqService) {
+      groqSuggestions = await this.groqService.suggestLaunchCommands(tweetData);
+      if (commands.length === 0 && groqSuggestions.length > 0) {
+        for (const suggestion of groqSuggestions) {
           console.log(`[Groq Suggestion] Ticker: ${suggestion.ticker}, Name: ${suggestion.name}`);
           commands.push(suggestion);
         }
       }
     }
 
+    // Keyword triggers for Groq + Telegram alert
+    const keywordTriggers = [
+      'world record',
+      'record',
+      'ath',
+      'speedrun',
+      'trending',
+      'viral',
+      'breaking',
+      'launch',
+      'fair launch',
+      'stealth',
+      'mint',
+      'deploy',
+      'epic',
+      'story',
+      'cute',
+      'animal',
+      'meme',
+      'dog',
+      'cat',
+      'frog',
+      'squirrel',
+      'hamster',
+      'penguin',
+      'otter',
+      'capybara',
+    ];
+    const textLower = tweetData.text.toLowerCase();
+    const keywordHit = keywordTriggers.some((k) => textLower.includes(k));
+
+    if (keywordHit && groqSuggestions.length > 0) {
+      const top = groqSuggestions[0];
+      const tweetLink =
+        tweetData.authorUsername && tweetData.id
+          ? `https://twitter.com/${tweetData.authorUsername}/status/${tweetData.id}`
+          : '';
+      const alertText = [
+        `🚀 *Groq Suggestion*`,
+        `@${tweetData.authorUsername || 'unknown'}: ${tweetData.text.substring(0, 180)}`,
+        `*Ticker:* ${top.ticker}`,
+        `*Name:* ${top.name}`,
+        top.description ? `*Reason:* ${top.description.substring(0, 120)}` : '',
+        tweetLink,
+      ]
+        .filter(Boolean)
+        .join('\n');
+      await sendTelegramAlert(alertText);
+    }
+
     if (commands.length > 0 && this.onLaunchHandler) {
       for (const cmd of commands) {
         console.log(`[Launch Command Detected] Ticker: ${cmd.ticker}, Name: ${cmd.name}`);
-        await this.onLaunchHandler(cmd);
+        await this.onLaunchHandler(cmd, tweetData);
         // Respect backpressure lightly
         await new Promise(res => setTimeout(res, 100));
       }
@@ -187,9 +241,10 @@ export class TwitterStreamService {
 
     // Start the filtered stream
     this.stream = await this.appClient.v2.searchStream({
-      'tweet.fields': ['created_at', 'author_id', 'text'],
+      'tweet.fields': ['created_at', 'author_id', 'text', 'entities', 'attachments'],
       'user.fields': ['username'],
-      expansions: ['author_id'],
+      'media.fields': ['url', 'preview_image_url', 'type'],
+      expansions: ['author_id', 'attachments.media_keys'],
     });
 
     // Enable auto-reconnect

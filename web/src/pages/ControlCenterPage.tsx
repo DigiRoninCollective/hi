@@ -150,6 +150,18 @@ export default function ControlCenterPage() {
     ])
   }
 
+  const handleSwap = () => {
+    navigate('/feed')
+  }
+
+  const handleFund = () => {
+    if (!wallet.address) {
+      alert('Please connect a wallet first in Settings')
+      return
+    }
+    window.open(`https://orca.so/`, '_blank')
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -205,8 +217,18 @@ export default function ControlCenterPage() {
                 {wallet.address || 'No wallet connected'}
               </div>
               <div className="flex items-center gap-2 mt-3">
-                <button className="flex-1 py-2 rounded-lg bg-accent-green text-dark-900 font-semibold">Swap</button>
-                <button className="flex-1 py-2 rounded-lg border border-dark-600 hover:border-accent-green transition text-sm">Fund</button>
+                <button
+                  onClick={handleSwap}
+                  className="flex-1 py-2 rounded-lg bg-accent-green text-dark-900 font-semibold hover:bg-green-400 transition"
+                >
+                  Swap
+                </button>
+                <button
+                  onClick={handleFund}
+                  className="flex-1 py-2 rounded-lg border border-dark-600 hover:border-accent-green transition text-sm"
+                >
+                  Fund
+                </button>
               </div>
             </>
           )}

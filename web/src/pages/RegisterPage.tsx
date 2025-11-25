@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { UserPlus, Loader2, Zap, Check, X } from 'lucide-react'
+import { UserPlus, Loader2, Zap, Check, X, ArrowLeft } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
+import { useBackNavigation } from '../hooks/useNavigation'
 
 export default function RegisterPage() {
   const [username, setUsername] = useState('')
@@ -12,6 +13,7 @@ export default function RegisterPage() {
   const { register } = useAuth()
   const { addToast } = useToast()
   const navigate = useNavigate()
+  const { goBack } = useBackNavigation()
 
   const passwordRequirements = [
     { label: 'At least 8 characters', met: password.length >= 8 },
@@ -55,6 +57,18 @@ export default function RegisterPage() {
   return (
     <div className="min-h-screen bg-dark-900 flex items-center justify-center px-4">
       <div className="w-full max-w-md">
+        {/* Back Button */}
+        <div className="mb-6">
+          <button
+            onClick={goBack}
+            className="p-2 hover:bg-dark-700 rounded-lg transition-colors inline-flex items-center gap-2"
+            title="Go back"
+          >
+            <ArrowLeft className="w-5 h-5 text-gray-400 hover:text-white" />
+            <span className="text-sm text-gray-400">Back</span>
+          </button>
+        </div>
+
         <div className="text-center mb-8">
           <Link to="/" className="inline-flex items-center gap-2 mb-4">
             <Zap className="w-10 h-10 text-accent-green" />

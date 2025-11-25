@@ -15,6 +15,7 @@ import {
   AtSign,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import { openExternal } from '../utils/electron'
 
 // Platform icons
 const DiscordIcon = () => (
@@ -519,16 +520,15 @@ export default function AlphaFeedPage() {
                     {signal.contract_addresses && signal.contract_addresses.length > 0 && (
                       <div className="flex flex-wrap gap-2 mb-2">
                         {signal.contract_addresses.slice(0, 2).map((addr) => (
-                          <a
+                          <button
                             key={addr}
-                            href={`https://solscan.io/token/${addr}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                            type="button"
+                            onClick={() => openExternal(`https://solscan.io/token/${addr}`)}
                             className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-mono hover:underline flex items-center gap-1"
                           >
                             {addr.slice(0, 8)}...{addr.slice(-6)}
                             <ExternalLink className="w-3 h-3" />
-                          </a>
+                          </button>
                         ))}
                       </div>
                     )}

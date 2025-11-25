@@ -4,11 +4,18 @@ import { PumpPortalService } from './pumpportal';
 import { SSEServer } from './sse-server';
 import { TweetClassifier } from './classifier';
 import { AlertingService } from './alerting';
-import { eventBus, EventType } from './events';
+import { eventBus, EventType, EventBus } from './events';
 import { ParsedLaunchCommand, TweetData } from './types';
+import { buildLaunchCandidate } from './launch-candidate';
+import { shouldLaunch } from './launch-decision';
+import { upsertLaunchCandidate, updateLaunchStatus } from './launch-cache';
+import { PumpPortalTradingService } from './pumpportal-trading.service';
+import { defaultSeedBuyConfig } from './config/trading';
+import { PumpPortalTradingManager, TradingWalletConfig } from './pumpportal-trading-manager';
 import { createApiRoutes } from './api-routes';
 import { createAuthRoutes } from './auth-routes';
 import { createAlphaRoutes } from './alpha-routes';
+import { createConfigRoutes } from './api-routes-config';
 import { initSupabase } from './supabase';
 import { cleanupExpiredSessions } from './auth.service';
 import { saveTweet, saveEvent, saveAlphaSignal } from './database.service';
@@ -19,6 +26,13 @@ import { PumpPortalDataService } from './pumpportal-data.service';
 
 // Track launched tokens to avoid duplicates
 const launchedTokens = new Set<string>();
+
+type AutoDeployMode = 'off' | 'semi' | 'full';
+function getAutoDeployMode(): AutoDeployMode {
+  const mode = (process.env.AUTO_DEPLOY_MODE || 'semi').toLowerCase() as AutoDeployMode;
+  if (mode === 'off' || mode === 'semi' || mode === 'full') return mode;
+  return 'semi';
+}
 
 async function main() {
   console.log('='.repeat(60));
@@ -92,6 +106,18 @@ async function main() {
     config.tokenDefaults,
     zkMixerService
   );
+  // Trading manager (supports multi-wallet Lightning API keys)
+  const tradingConfigs: TradingWalletConfig[] = [];
+  if (process.env.PUMPPORTAL_API_KEY) {
+    tradingConfigs.push({
+      id: 'default',
+      apiKey: process.env.PUMPPORTAL_API_KEY,
+      defaultSlippage: 10,
+      defaultPriorityFee: 0.0005,
+    });
+  }
+  const tradingManager = tradingConfigs.length > 0 ? new PumpPortalTradingManager(tradingConfigs) : null;
+  const tradingService = tradingManager ? tradingManager.getWallet('default') : null;
 
   // Check wallet balance
   try {
@@ -115,25 +141,38 @@ async function main() {
     });
     console.error('Make sure your Solana RPC URL is correct and accessible.');
     process.exit(1);
-  }
+}
 
-  // Initialize Groq service early (needed for API routes)
-  const groqService = config.groq.enabled && config.groq.apiKey
-    ? new GroqService(config.groq)
-    : null;
+function emitAnalysisEvent(eventBus: EventBus, tweet: TweetData, analysis: any, status: string): void {
+  eventBus.emit(EventType.TWEET_CLASSIFIED, {
+    tweetId: tweet.id,
+    authorUsername: tweet.authorUsername,
+    text: tweet.text,
+    classification: undefined,
+    analysis: analysis || undefined,
+    launchStatus: status,
+  });
+}
 
-  // Set up API routes with PumpPortal and Groq
-  const apiRouter = createApiRoutes(pumpPortal, eventBus, zkMixerService, groqService);
-  sseServer.setApiRouter(apiRouter);
-  sseServer.setPumpPortal(pumpPortal);
-  console.log('  [x] API routes initialized');
+function parseTradingWalletOverrides(): Record<string, string> {
+  const raw = process.env.TRADING_WALLET_PER_AUTHOR;
+  if (!raw) return {};
+  return raw.split(',').reduce((acc, pair) => {
+    const [handle, walletId] = pair.split(':').map(s => s.trim());
+    if (handle && walletId) acc[handle.toLowerCase()] = walletId;
+    return acc;
+  }, {} as Record<string, string>);
+}
 
-  // Set up auth routes (requires Supabase)
-  if (supabaseEnabled) {
-    const authRouter = createAuthRoutes();
-    sseServer.setAuthRouter(authRouter);
-    console.log('  [x] Auth routes initialized');
-  }
+function selectTradingWalletId(authorHandle: string): string | undefined {
+  const overrides = parseTradingWalletOverrides();
+  return overrides[authorHandle.toLowerCase()] || undefined;
+}
+
+// Initialize Groq service early (needed for API routes)
+const groqService = config.groq.enabled && config.groq.apiKey
+  ? new GroqService(config.groq)
+  : null;
 
   // 6. Alpha Aggregator service - for multi-source signal aggregation
   let alphaAggregator: AlphaAggregatorService | null = null;
@@ -152,12 +191,14 @@ async function main() {
       }
 
       // Emit event for SSE streaming
+      const signalAny = signal as any;
       eventBus.emit(EventType.ALERT_INFO, {
-        title: `Alpha Signal [${signal.priority.toUpperCase()}]`,
-        message: `${signal.source}: ${signal.content.substring(0, 100)}...`,
+        title: `Alpha Signal [${signal.priority?.toUpperCase() || 'INFO'}]`,
+        message: `${signalAny.source_author || signalAny.source || 'Unknown'}: ${signalAny.content?.substring(0, 100) || '...'}`,
         metadata: {
-          source: signal.source,
-          category: signal.category,
+          source: signalAny.source,
+          channel: signalAny.source_channel,
+          author: signalAny.source_author,
           priority: signal.priority,
           tickers: signal.tickers,
           confidence: signal.confidence_score,
@@ -171,6 +212,29 @@ async function main() {
   } else {
     console.log('\n  [ ] Alpha Aggregator disabled (no sources configured)');
   }
+
+  // Set up API routes with PumpPortal, Groq, and Telegram (when enabled)
+  const apiRouter = createApiRoutes(
+    pumpPortal,
+    eventBus,
+    zkMixerService,
+    groqService,
+    alphaAggregator?.getTelegramService() || null
+  );
+  sseServer.setApiRouter(apiRouter);
+  sseServer.setPumpPortal(pumpPortal);
+  console.log('  [x] API routes initialized');
+
+  // Set up auth routes (requires Supabase)
+  if (supabaseEnabled) {
+    const authRouter = createAuthRoutes();
+    sseServer.setAuthRouter(authRouter);
+    console.log('  [x] Auth routes initialized');
+  }
+
+  // Config routes
+  const configRouter = createConfigRoutes();
+  sseServer.setConfigRouter(configRouter);
 
   // Set up alpha routes
   const alphaRouter = createAlphaRoutes(alphaAggregator, eventBus);
@@ -200,9 +264,8 @@ async function main() {
     twitter = new TwitterStreamService(config.twitter, groqService);
 
     // Set up the launch handler with classifier integration
-    twitter.onLaunch(async (command: ParsedLaunchCommand) => {
-      // Emit tweet received event
-      const tweetData: TweetData = {
+    twitter.onLaunch(async (command: ParsedLaunchCommand, tweet?: TweetData) => {
+      const tweetData: TweetData = tweet || {
         id: command.tweetId,
         text: command.tweetText,
         authorId: 'unknown',
@@ -212,40 +275,106 @@ async function main() {
         mediaUrls: command.imageUrl ? [command.imageUrl] : undefined,
       };
 
+      const tweetUrl =
+        tweetData.authorUsername && tweetData.id
+          ? `https://twitter.com/${tweetData.authorUsername}/status/${tweetData.id}`
+          : undefined;
+
       eventBus.emit(EventType.TWEET_RECEIVED, {
-        tweetId: command.tweetId,
-        authorUsername: command.tweetAuthor,
-        text: command.tweetText,
+        tweetId: tweetData.id,
+        authorUsername: tweetData.authorUsername,
+        text: tweetData.text,
+        urls: tweetData.urls,
+        mediaUrls: tweetData.mediaUrls,
       });
 
       // Save tweet to database if Supabase is enabled
       if (supabaseEnabled) {
         await saveTweet({
-          tweet_id: command.tweetId,
-          author_username: command.tweetAuthor,
-          content: command.tweetText,
+          tweet_id: tweetData.id,
+          author_username: tweetData.authorUsername,
+          content: tweetData.text,
           is_retweet: false,
         }).catch(err => console.error('Failed to save tweet:', err));
       }
 
-    // Run through classifier for additional filtering
-    const filteredCommand = classifier.processAndFilter(tweetData, command);
+      // Groq detailed analysis
+      let groqAnalysis = null;
+      if (groqService) {
+        try {
+          groqAnalysis = await groqService.analyzeTweetDetailed({
+            ...tweetData,
+            authorFollowers: undefined,
+            authorVerified: undefined,
+          });
+        } catch (err) {
+          console.error('[Groq] Failed to analyze tweet', tweetData.id, err);
+        }
+      }
 
-    if (!filteredCommand) {
-      console.log(`Tweet filtered out by classifier`);
-      eventBus.emit(EventType.TWEET_FILTERED, {
-          tweetId: command.tweetId,
-          authorUsername: command.tweetAuthor,
-          text: command.tweetText,
+      const candidate = groqAnalysis
+        ? buildLaunchCandidate(
+            {
+              ...tweetData,
+              tweetUrl,
+            },
+            groqAnalysis,
+            {
+              accountProfileId: 'default',
+              tradingWalletId: selectTradingWalletId(tweetData.authorUsername) || 'default',
+            }
+          )
+        : null;
+
+      if (candidate) {
+        upsertLaunchCandidate(tweetData.id, candidate, command, 'candidate');
+      }
+
+      // Run through classifier for additional filtering
+      const filteredCommand = classifier.processAndFilter(tweetData, command);
+      if (!filteredCommand) {
+        console.log(`Tweet filtered out by classifier`);
+        eventBus.emit(EventType.TWEET_FILTERED, {
+          tweetId: tweetData.id,
+          authorUsername: tweetData.authorUsername,
+          text: tweetData.text,
         });
+        emitAnalysisEvent(eventBus, tweetData, groqAnalysis, 'skipped-classifier');
+        updateLaunchStatus(tweetData.id, 'skipped-classifier');
+        return;
+      }
+
+      if (!candidate || !groqAnalysis) {
+        emitAnalysisEvent(eventBus, tweetData, groqAnalysis, 'analysis-missing');
+        updateLaunchStatus(tweetData.id, 'analysis-missing');
+        return;
+      }
+
+      const passesPolicy = shouldLaunch(candidate);
+
+      if (!passesPolicy) {
+        emitAnalysisEvent(eventBus, tweetData, groqAnalysis, 'skipped-policy');
+        updateLaunchStatus(tweetData.id, 'skipped-policy');
         return;
       }
 
       // Create a unique key for this launch to prevent duplicates
-      const launchKey = `${command.ticker}-${command.tweetId}`;
+      const deployTicker = candidate.analysis.tokenTicker || command.ticker;
+      const deployName = candidate.analysis.tokenName || command.name;
+      const launchKey = `${deployTicker}-${tweetData.id}`;
 
       if (launchedTokens.has(launchKey)) {
         console.log(`\nSkipping duplicate launch: ${command.ticker}`);
+        return;
+      }
+
+      const autoMode = getAutoDeployMode();
+
+      const statusForEmit = autoMode === 'full' ? 'queued' : 'candidate';
+      emitAnalysisEvent(eventBus, tweetData, groqAnalysis, statusForEmit);
+      updateLaunchStatus(tweetData.id, statusForEmit as any);
+
+      if (autoMode !== 'full') {
         return;
       }
 
@@ -259,41 +388,84 @@ async function main() {
 
         // Emit token creating event
         eventBus.emit(EventType.TOKEN_CREATING, {
-          ticker: command.ticker,
-          name: command.name,
+          ticker: deployTicker,
+          name: deployName,
         });
 
-      // If ZK mixer guard is enabled, require proof on the command
-      if (zkMixerService && zkMixerService.isEnabled()) {
-        if (!command.zkProof || !command.zkPublicSignals) {
-          console.error('ZK Mixer enabled but no proof provided; skipping launch.');
-          eventBus.emit(EventType.TOKEN_FAILED, {
-            ticker: command.ticker,
-            name: command.name,
-            error: 'Missing ZK proof',
-          });
-          // Allow retry if proof arrives later
-          launchedTokens.delete(launchKey);
-          return;
+        // If ZK mixer guard is enabled, require proof on the command
+        if (zkMixerService && zkMixerService.isEnabled()) {
+          if (!command.zkProof || !command.zkPublicSignals) {
+            console.error('ZK Mixer enabled but no proof provided; skipping launch.');
+            eventBus.emit(EventType.TOKEN_FAILED, {
+              ticker: command.ticker,
+              name: command.name,
+              error: 'Missing ZK proof',
+            });
+            // Allow retry if proof arrives later
+            launchedTokens.delete(launchKey);
+            return;
+          }
         }
-      }
 
-      // Create the token
-      const result = await pumpPortal.createToken(command, command.zkProof, command.zkPublicSignals);
+        // Create the token (override ticker/name with Groq decision)
+        const result = await pumpPortal.createToken(
+          { ...command, ticker: deployTicker, name: deployName },
+          command.zkProof,
+          command.zkPublicSignals
+        );
+
+        updateLaunchStatus(tweetData.id, 'launched');
 
         // Emit success event (alerting service will handle notifications)
         eventBus.emit(EventType.TOKEN_CREATED, {
-          ticker: command.ticker,
-          name: command.name,
+          ticker: deployTicker,
+          name: deployName,
           mint: result.mint,
           signature: result.signature,
         });
 
+        // Optional seed buy using hosted trading API (wallet selection supported)
+        const walletForSeedBuy = candidate.tradingWalletId || 'default';
+        const svc =
+          tradingManager && walletForSeedBuy && tradingManager.hasWallet(walletForSeedBuy)
+            ? tradingManager.getWallet(walletForSeedBuy)
+            : tradingService;
+
+        if (svc && defaultSeedBuyConfig.enabled) {
+          try {
+            const seedSig = await svc.buyToken({
+              mint: result.mint,
+              amountSol: defaultSeedBuyConfig.solAmount,
+              slippageBps: defaultSeedBuyConfig.slippageBps,
+              priorityFee: defaultSeedBuyConfig.priorityFeeSol,
+            });
+
+            eventBus.emit(EventType.ALERT_SUCCESS, {
+              title: 'Seed buy executed',
+              message: `Bought ${defaultSeedBuyConfig.solAmount} SOL of ${deployTicker}`,
+              metadata: {
+                mint: result.mint,
+                signature: seedSig,
+                amountSol: defaultSeedBuyConfig.solAmount,
+              },
+            });
+          } catch (err) {
+            console.error('[SeedBuy] Failed:', err);
+            eventBus.emit(EventType.ALERT_WARNING, {
+              title: 'Seed buy failed',
+              message: err instanceof Error ? err.message : 'Seed buy error',
+              metadata: {
+                mint: result.mint,
+              },
+            });
+          }
+        }
+
         console.log('\n' + '-'.repeat(40));
         console.log('  TOKEN LAUNCH SUCCESSFUL');
         console.log('-'.repeat(40));
-        console.log(`  Ticker: ${command.ticker}`);
-        console.log(`  Name: ${command.name}`);
+        console.log(`  Ticker: ${deployTicker}`);
+        console.log(`  Name: ${deployName}`);
         console.log(`  Mint: ${result.mint}`);
         console.log(`  Signature: ${result.signature}`);
         console.log(`  PumpFun: https://pump.fun/${result.mint}`);
@@ -303,10 +475,12 @@ async function main() {
 
         // Emit failure event
         eventBus.emit(EventType.TOKEN_FAILED, {
-          ticker: command.ticker,
-          name: command.name,
+          ticker: deployTicker,
+          name: deployName,
           error: String(error),
         });
+
+        updateLaunchStatus(tweetData.id, 'failed');
 
         // Remove from launched set so it can be retried
         launchedTokens.delete(launchKey);

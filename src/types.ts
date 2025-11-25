@@ -59,6 +59,41 @@ export interface ZkMixerConfig {
   nullifierStorePath?: string;
 }
 
+// Groq analysis result (LLM-backed)
+export interface GroqAnalysisResult {
+  shouldLaunch: boolean;
+  confidence: number; // 0-1
+  score1to10: number; // 1-10
+  reason: string;
+  tokenName: string;
+  tokenTicker: string;
+  theme: string;
+  tone: string;
+  keywordsDetected: string[];
+  riskFlags: string[];
+  nsfwOrSensitive: boolean;
+}
+
+// Unified candidate used for decisioning and deployment
+export interface LaunchCandidate {
+  tweetId: string;
+  tweetUrl?: string;
+  tweetText: string;
+  authorId: string;
+  authorHandle: string;
+  authorFollowers?: number;
+  authorVerified?: boolean;
+  createdAt: string;
+  urls?: string[];
+  mediaUrls?: string[];
+  language?: string;
+  analysis: GroqAnalysisResult;
+  source: 'twitter';
+  accountProfileId?: string;
+  contextLinks?: Array<{ title: string; url: string; source: 'brave'; snippet?: string }>;
+  tradingWalletId?: string; // optional wallet selection for trading actions
+}
+
 // Tweet parsing types
 export interface ParsedLaunchCommand {
   ticker: string;
@@ -132,7 +167,7 @@ export interface IPFSMetadataResponse {
 }
 
 // Event types
-export type LaunchEventHandler = (command: ParsedLaunchCommand) => Promise<void>;
+export type LaunchEventHandler = (command: ParsedLaunchCommand, tweet?: TweetData) => Promise<void>;
 
 // Error handling utilities
 export function getErrorMessage(error: unknown): string {

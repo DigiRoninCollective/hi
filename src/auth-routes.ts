@@ -19,10 +19,35 @@ import {
   getContractAddresses,
   addContractAddress,
   removeContractAddress,
+  getPlatformSettings,
+  upsertPlatformSettings,
+  getLaunchPreferencesDb,
+  upsertLaunchPreferencesDb,
+  listWalletPool,
+  addWalletsToPool,
+  deactivateWalletPool,
 } from './database.service';
+import { WalletPoolInsert } from './database.types';
+import { encryptSecret } from './crypto.util';
 
 export function createAuthRoutes(): Router {
   const router = Router();
+
+  const requireAdmin = (req: AuthenticatedRequest, res: Response): boolean => {
+    if (req.user?.role !== 'admin') {
+      res.status(403).json({ error: 'Admin only' });
+      return false;
+    }
+    return true;
+  };
+
+  const requireSTier = (req: AuthenticatedRequest, res: Response): boolean => {
+    if (req.user?.role !== 'admin') {
+      res.status(403).json({ error: 'S-tier required' });
+      return false;
+    }
+    return true;
+  };
 
   // Register new user
   router.post('/register', async (req: Request, res: Response): Promise<Response | void> => {
@@ -278,6 +303,69 @@ export function createAuthRoutes(): Router {
     }
 
     res.json({ success: true });
+  });
+
+  // Launch preferences (file-based storage)
+  router.get('/launch-preferences', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    const prefs = await getLaunchPreferencesDb(req.user!.id);
+    res.json(prefs);
+  });
+
+  router.put('/launch-preferences', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    const prefs = await upsertLaunchPreferencesDb(req.user!.id, req.body);
+    if (!prefs) {
+      return res.status(500).json({ error: 'Failed to update preferences' });
+    }
+    res.json(prefs);
+  });
+
+  // Admin: platform settings
+  router.get('/admin/platform-settings', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    if (!requireAdmin(req, res)) return;
+    const settings = await getPlatformSettings();
+    res.json(settings);
+  });
+
+  router.put('/admin/platform-settings', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    if (!requireAdmin(req, res)) return;
+    const { buy_fee_bps, sell_fee_bps, fee_wallet } = req.body;
+    const updated = await upsertPlatformSettings(
+      {
+        buy_fee_bps,
+        sell_fee_bps,
+        fee_wallet,
+      },
+      req.user?.id
+    );
+    if (!updated) {
+      return res.status(500).json({ error: 'Failed to update platform settings' });
+    }
+    res.json(updated);
+  });
+
+  // Wallet pool (S-tier)
+  router.get('/wallet-pool', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    if (!requireSTier(req, res)) return;
+    const pool = await listWalletPool(req.user!.id);
+    res.json(pool.map(w => ({ id: w.id, public_key: w.public_key, created_at: w.created_at })));
+  });
+
+  router.post('/wallet-pool/generate', authMiddleware(true), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    if (!requireSTier(req, res)) return;
+    const count = Math.max(1, Math.min(20, parseInt(req.body.count || '5', 10)));
+    const wallets: WalletPoolInsert[] = [];
+    for (let i = 0; i < count; i++) {
+      const kp = require('@solana/web3.js').Keypair.generate();
+      wallets.push({
+        user_id: req.user!.id,
+        public_key: kp.publicKey.toBase58(),
+        encrypted_private_key: encryptSecret(require('bs58').encode(kp.secretKey)),
+        is_active: true,
+      });
+    }
+    await deactivateWalletPool(req.user!.id);
+    const inserted = await addWalletsToPool(wallets);
+    res.status(201).json(inserted.map(w => ({ id: w.id, public_key: w.public_key, created_at: w.created_at })));
   });
 
   return router;

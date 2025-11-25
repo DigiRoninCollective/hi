@@ -10,6 +10,7 @@ import {
   requestLogger,
   eventStreamLimiter,
 } from './security.middleware';
+import { createConfigRoutes } from './api-routes-config';
 
 interface SSEClient {
   id: string;
@@ -41,6 +42,7 @@ export class SSEServer {
   private clientIdCounter: number = 0;
   private apiRouter: Router | null = null;
   private authRouter: Router | null = null;
+  private configRouter: Router | null = null;
 
   constructor(eventBus: EventBus, config: Partial<SSEServerConfig> = {}) {
     this.eventBus = eventBus;
@@ -73,6 +75,14 @@ export class SSEServer {
   setAuthRouter(router: Router): void {
     this.authRouter = router;
     this.app.use('/api/auth', router);
+  }
+
+  /**
+   * Set config routes
+   */
+  setConfigRouter(router: Router): void {
+    this.configRouter = router;
+    this.app.use('/api/config', router);
   }
 
   /**

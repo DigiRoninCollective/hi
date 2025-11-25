@@ -54,6 +54,11 @@ cp .env.example .env
 | `PUMPPORTAL_WS_TOKEN_MINTS` | - | Comma-separated mints to monitor trades |
 | `PUMPPORTAL_WS_ACCOUNTS` | - | Comma-separated accounts to monitor trades |
 | `PUMPPORTAL_WS_SUBSCRIBE_MIGRATION` | false | Subscribe to migration events |
+| `DEFAULT_BUY_FEE_BPS` | 150 | Default fee (bps) on buys when no DB setting exists |
+| `DEFAULT_SELL_FEE_BPS` | 150 | Default fee (bps) on sells when no DB setting exists |
+| `PLATFORM_FEE_WALLET` | GAffyNL3KmejcYgVtVDg5zhs2Deeptg8BgE9EYN4WzrD | Destination wallet for platform fees |
+| `ENCRYPTION_KEY` | - | 32-byte AES key (hex or base64) for encrypting wallet pools |
+| `SUPABASE_DB_URL` | - | Postgres connection string for migrations (used by scripts/apply-supabase-migrations.js) |
 
 > Note: The Solana 1.x SDK (via PumpFun/Raydium/Jito deps) pulls `bigint-buffer` (GHSA-3gc7-fjrx-p6mg). No patched 1.x release exists yet; functional impact is low because web3 uses it on fixed-size fields. Upgrade when upstream publishes a fix.
 
@@ -127,6 +132,16 @@ The frontend dev server runs on port 5173 and proxies API requests to the backen
 ```bash
 npm run build:all  # Builds both backend and frontend
 npm start
+```
+
+### Apply Supabase migrations without Supabase CLI
+
+```bash
+# Install dependency once
+npm install pg
+
+# Run migrations (uses supabase/migrations/*.sql)
+SUPABASE_DB_URL="postgresql://postgres:<password>@db.<ref>.supabase.co:5432/postgres" npm run db:push
 ```
 
 ### MCP server (Claude Desktop / MCP clients)

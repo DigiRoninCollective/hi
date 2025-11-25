@@ -1,0 +1,13 @@
+{
+  "wallets": [],
+  "bundler": {
+    "enabled": true,
+    "jitoEnabled": false,
+    "jitoTipLamports": 10000,
+    "jitoBlockEngineUrl": "https://mainnet.block-engine.jito.wtf",
+    "maxBundleSize": 5,
+    "retryAttempts": 3
+  },
+  "rpcUrl": "https://mainnet.helius-rpc.com/?api-key=fe0d8dbd-c6fb-425e-a9cc-60cbc887e24d",
+  "activeWalletIndex": -1
+}

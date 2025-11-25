@@ -8,6 +8,9 @@ import AlphaFeedPage from './pages/AlphaFeedPage'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import SettingsPage from './pages/SettingsPage'
+import AdminPage from './pages/AdminPage'
+import TelegramAdminPage from './pages/TelegramAdminPage'
+import HelpPage from './pages/HelpPage'
 
 function App() {
   return (
@@ -24,6 +27,9 @@ function App() {
         <Route path="feed" element={<FeedPage />} />
         <Route path="alpha" element={<AlphaFeedPage />} />
         <Route path="settings" element={<SettingsPage />} />
+        <Route path="admin" element={<AdminPage />} />
+        <Route path="telegram-admin" element={<TelegramAdminPage />} />
+        <Route path="help" element={<HelpPage />} />
       </Route>
     </Routes>
   )

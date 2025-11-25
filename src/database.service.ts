@@ -9,15 +9,18 @@ import {
   Token, TokenInsert, TokenUpdate,
   TokenTransaction, TokenTransactionInsert,
   Event, EventInsert,
+  PlatformSettings,
   Json,
   // Alpha aggregator types
   WatchedDiscordChannel, WatchedDiscordChannelInsert,
   WatchedTelegramChannel, WatchedTelegramChannelInsert,
   WatchedSubreddit, WatchedSubredditInsert,
-  AlphaSignal, AlphaSignalInsert,
+  AlphaSignal, AlphaSignalInsert, AlphaSourceType,
   UserAlphaFilter, UserAlphaFilterInsert,
   UserSignalInteraction, UserSignalInteractionInsert,
-  AlphaSourceType, AlphaSignalCategory, AlphaSignalPriority,
+  AlphaSignalCategory, AlphaSignalPriority,
+  WalletPool, WalletPoolInsert,
+  UserLaunchPreferences, UserLaunchPreferencesInsert,
 } from './database.types';
 
 // User operations
@@ -119,6 +122,147 @@ export async function upsertUserSettings(userId: string, settings: Partial<UserS
     return updateUserSettings(userId, settings);
   }
   return createUserSettings({ user_id: userId, ...settings });
+}
+
+// Platform settings (fees, wallet)
+const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
+  id: 'default',
+  buy_fee_bps: parseInt(process.env.DEFAULT_BUY_FEE_BPS || '150', 10),
+  sell_fee_bps: parseInt(process.env.DEFAULT_SELL_FEE_BPS || '150', 10),
+  fee_wallet: process.env.PLATFORM_FEE_WALLET || 'GAffyNL3KmejcYgVtVDg5zhs2Deeptg8BgE9EYN4WzrD',
+  updated_at: new Date().toISOString(),
+  updated_by: null,
+};
+
+export async function getPlatformSettings(): Promise<PlatformSettings> {
+  const { data, error } = await getSupabase()
+    .from('platform_settings')
+    .select()
+    .limit(1)
+    .single();
+
+  if (error || !data) {
+    return DEFAULT_PLATFORM_SETTINGS;
+  }
+  return data as PlatformSettings;
+}
+
+export async function upsertPlatformSettings(
+  settings: Partial<PlatformSettings>,
+  userId?: string
+): Promise<PlatformSettings | null> {
+  const merged: PlatformSettings = {
+    ...DEFAULT_PLATFORM_SETTINGS,
+    ...settings,
+    id: 'default',
+    updated_at: new Date().toISOString(),
+    updated_by: userId || null,
+  };
+
+  const { data, error } = await getSupabase()
+    .from('platform_settings')
+    .upsert(merged, { onConflict: 'id' })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error upserting platform settings:', error);
+    return null;
+  }
+  return data as PlatformSettings;
+}
+
+// Launch preferences
+const DEFAULT_LAUNCH_PREFS: UserLaunchPreferences = {
+  user_id: '',
+  enable_multi_wallet: false,
+  wallets_to_use: 3,
+  max_per_wallet_sol: 1,
+  amount_variance_bps: 250,
+  timing_jitter_ms: 8000,
+  auto_sell: false,
+  auto_top_up: false,
+  min_balance_sol: 0.2,
+  top_up_amount_sol: 0.5,
+  initial_buy_sol: 0.1,
+  slippage: 10,
+  priority_fee: 0.0005,
+  auto_deploy: false,
+  mayhem_mode: false,
+  updated_at: new Date().toISOString(),
+};
+
+export async function getLaunchPreferencesDb(userId: string): Promise<UserLaunchPreferences> {
+  const { data, error } = await getSupabase()
+    .from('user_launch_preferences')
+    .select()
+    .eq('user_id', userId)
+    .single();
+
+  if (error || !data) {
+    return { ...DEFAULT_LAUNCH_PREFS, user_id: userId };
+  }
+  return data as UserLaunchPreferences;
+}
+
+export async function upsertLaunchPreferencesDb(
+  userId: string,
+  prefs: Partial<UserLaunchPreferencesInsert>
+): Promise<UserLaunchPreferences | null> {
+  const merged: UserLaunchPreferencesInsert = {
+    ...DEFAULT_LAUNCH_PREFS,
+    ...prefs,
+    user_id: userId,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data, error } = await getSupabase()
+    .from('user_launch_preferences')
+    .upsert(merged, { onConflict: 'user_id' })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error upserting launch preferences:', error);
+    return null;
+  }
+  return data as UserLaunchPreferences;
+}
+
+// Wallet pool
+export async function addWalletsToPool(wallets: WalletPoolInsert[]): Promise<WalletPool[]> {
+  const { data, error } = await getSupabase()
+    .from('wallet_pools')
+    .insert(wallets)
+    .select();
+
+  if (error) {
+    console.error('Error inserting wallet pool:', error);
+    return [];
+  }
+  return (data || []) as WalletPool[];
+}
+
+export async function listWalletPool(userId: string): Promise<WalletPool[]> {
+  const { data, error } = await getSupabase()
+    .from('wallet_pools')
+    .select()
+    .eq('user_id', userId)
+    .eq('is_active', true)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching wallet pool:', error);
+    return [];
+  }
+  return (data || []) as WalletPool[];
+}
+
+export async function deactivateWalletPool(userId: string): Promise<void> {
+  await getSupabase()
+    .from('wallet_pools')
+    .update({ is_active: false })
+    .eq('user_id', userId);
 }
 
 // Watched Accounts operations
