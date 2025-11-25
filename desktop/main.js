@@ -27,6 +27,9 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
+    // In production, files are in the asar.
+    // __dirname in production points to app.asar/desktop
+    // web/dist is at app.asar/web/dist
     const indexPath = path.join(__dirname, '..', 'web', 'dist', 'index.html');
     mainWindow.loadFile(indexPath);
   }
