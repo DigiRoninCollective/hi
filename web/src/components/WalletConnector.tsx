@@ -1,6 +1,6 @@
 import { useWallet } from '@solana/wallet-adapter-react'
-import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import { useDesktopWallet } from '../hooks/useDesktopWallet'
+import { useConnect, useDisconnect, useModal } from '@phantom/react-sdk'
 import { Wallet, Plus, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
 
 /**
@@ -13,16 +13,26 @@ import { Wallet, Plus, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
  *
  * Web:
  * - Shows "Connect Wallet" button
- * - Opens Phantom/Solflare wallet modal
- * - Uses browser extensions
+ * - Uses Phantom React SDK for seamless connection
+ * - Supports multiple authentication methods (Google, Apple, Phantom Login, Solana wallets)
  */
 export function WalletConnector() {
-  const { publicKey: webPublicKey, connected: webConnected, disconnect: webDisconnect } = useWallet()
-  const { setVisible: openWalletModal } = useWalletModal()
+  // Solana wallet adapter (fallback for browser extensions)
+  const { publicKey: adapterPublicKey, connected: adapterConnected } = useWallet()
+
+  // Phantom React SDK hooks
+  const { connect, connecting, accounts } = useConnect()
+  const { disconnect } = useDisconnect()
+  const { open: openModal } = useModal()
+
+  // Desktop wallet management
   const { connection: desktopConnection, isLoading, error, isDesktop, loadKeypairFile, disconnect: desktopDisconnect } = useDesktopWallet()
 
+  const phantomConnected = accounts && accounts.length > 0
+  const phantomAccount = accounts?.[0]
+
+  // Desktop mode: use keypair import
   if (isDesktop) {
-    // Desktop Electron App
     if (desktopConnection?.connected) {
       return (
         <div className="flex items-center gap-3 px-4 py-2 bg-green-600/10 border border-green-600/30 rounded-lg">
@@ -77,19 +87,19 @@ export function WalletConnector() {
     )
   }
 
-  // Web App (Browser)
-  if (webConnected && webPublicKey) {
+  // Web App: use Phantom SDK or fallback to wallet adapter
+  if (phantomConnected && phantomAccount) {
     return (
       <div className="flex items-center gap-3 px-4 py-2 bg-green-600/10 border border-green-600/30 rounded-lg">
         <CheckCircle2 className="w-5 h-5 text-green-500" />
         <div className="flex-1">
-          <p className="text-sm text-gray-400">Wallet Connected</p>
+          <p className="text-sm text-gray-400">Wallet Connected (Phantom)</p>
           <p className="font-mono text-sm truncate text-green-400">
-            {webPublicKey.toBase58().slice(0, 10)}...{webPublicKey.toBase58().slice(-10)}
+            {phantomAccount.address.slice(0, 10)}...{phantomAccount.address.slice(-10)}
           </p>
         </div>
         <button
-          onClick={webDisconnect}
+          onClick={disconnect}
           className="px-3 py-1 text-sm bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded transition"
         >
           Disconnect
@@ -98,13 +108,34 @@ export function WalletConnector() {
     )
   }
 
+  // Fallback: wallet adapter connection (browser extensions)
+  if (adapterConnected && adapterPublicKey) {
+    return (
+      <div className="flex items-center gap-3 px-4 py-2 bg-green-600/10 border border-green-600/30 rounded-lg">
+        <CheckCircle2 className="w-5 h-5 text-green-500" />
+        <div className="flex-1">
+          <p className="text-sm text-gray-400">Wallet Connected</p>
+          <p className="font-mono text-sm truncate text-green-400">
+            {adapterPublicKey.toBase58().slice(0, 10)}...{adapterPublicKey.toBase58().slice(-10)}
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  // Try Phantom SDK first, fallback to wallet adapter modal
   return (
     <button
-      onClick={() => openWalletModal(true)}
-      className="flex items-center gap-2 px-4 py-2 bg-accent-green hover:bg-green-500 text-dark-900 rounded-lg transition font-semibold"
+      onClick={() => openModal()}
+      disabled={connecting}
+      className="flex items-center gap-2 px-4 py-2 bg-accent-green hover:bg-green-500 text-dark-900 rounded-lg transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
     >
-      <Wallet className="w-4 h-4" />
-      Connect Wallet
+      {connecting ? (
+        <Loader2 className="w-4 h-4 animate-spin" />
+      ) : (
+        <Wallet className="w-4 h-4" />
+      )}
+      {connecting ? 'Connecting...' : 'Connect Wallet'}
     </button>
   )
 }
