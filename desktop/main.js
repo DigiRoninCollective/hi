@@ -2,6 +2,13 @@ const { app, BrowserWindow, nativeTheme, shell, ipcMain } = require('electron');
 const path = require('path');
 const isDev = process.argv.includes('dev');
 
+// Import IPC handlers (if compiled from TypeScript)
+try {
+  require('./ipc-handlers.js');
+} catch (err) {
+  console.warn('IPC handlers not loaded (may be compiled separately)');
+}
+
 let mainWindow = null;
 
 function createWindow() {

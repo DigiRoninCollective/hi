@@ -256,8 +256,6 @@ export default function HomePage() {
               <button
                 onClick={() => {
                   setWalletModalOpen(false)
-                  setWalletStatus('idle')
-                  setWalletError('')
                 }}
                 className="text-gray-400 hover:text-white"
               >

@@ -57,6 +57,7 @@
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
     "jito-ts": "^4.2.1",
+    "keytar": "^7.9.0",
     "multer": "^2.0.2",
     "node-fetch": "^2.7.0",
     "node-telegram-bot-api": "^0.64.0",
@@ -103,7 +104,9 @@
     "mac": {
       "target": [
         "dmg"
-      ]
+      ],
+      "minimumSystemVersion": "10.13",
+      "category": "public.app-category.productivity"
     },
     "win": {
       "target": [

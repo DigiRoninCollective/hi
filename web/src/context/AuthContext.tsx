@@ -15,6 +15,9 @@ interface UserSettings {
   auto_deploy_enabled: boolean
   default_buy_amount: number
   default_platform: string
+  solana_network?: 'mainnet-beta' | 'devnet' | 'testnet'
+  custom_rpc_url?: string
+  use_custom_rpc?: boolean
 }
 
 interface AuthContextType {

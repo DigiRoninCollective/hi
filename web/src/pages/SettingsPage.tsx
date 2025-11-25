@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
+import { KeypairLoader } from '../components/KeypairLoader'
 
 interface WatchedAccount {
   id: string
@@ -37,6 +38,9 @@ export default function SettingsPage() {
     auto_deploy_enabled: false,
     default_buy_amount: 0.1,
     default_platform: 'pump',
+    solana_network: 'mainnet-beta' as 'mainnet-beta' | 'devnet' | 'testnet',
+    custom_rpc_url: '',
+    use_custom_rpc: false,
   })
 
   // Watched accounts
@@ -61,6 +65,9 @@ export default function SettingsPage() {
         auto_deploy_enabled: settings.auto_deploy_enabled ?? false,
         default_buy_amount: settings.default_buy_amount || 0.1,
         default_platform: settings.default_platform || 'pump',
+        solana_network: settings.solana_network || 'mainnet-beta',
+        custom_rpc_url: settings.custom_rpc_url || '',
+        use_custom_rpc: settings.use_custom_rpc ?? false,
       })
     }
   }, [settings])
@@ -219,6 +226,11 @@ export default function SettingsPage() {
           </div>
         </section>
 
+        {/* Keypair Management Section */}
+        <section className="bg-dark-800 rounded-xl border border-dark-600 p-6">
+          <KeypairLoader />
+        </section>
+
         {/* Appearance Section */}
         <section className="bg-dark-800 rounded-xl border border-dark-600 p-6">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
@@ -320,6 +332,69 @@ export default function SettingsPage() {
                 className="toggle"
               />
             </label>
+          </div>
+        </section>
+
+        {/* Solana Network Section */}
+        <section className="bg-dark-800 rounded-xl border border-dark-600 p-6">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Settings className="w-5 h-5" />
+            Solana Network
+          </h2>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm text-gray-400 mb-2">Network</label>
+              <select
+                value={localSettings.solana_network}
+                onChange={(e) => setLocalSettings(s => ({ ...s, solana_network: e.target.value as 'mainnet-beta' | 'devnet' | 'testnet' }))}
+                className="w-full bg-dark-700 rounded-lg px-4 py-2 border border-dark-600"
+              >
+                <option value="mainnet-beta">Mainnet Beta (Production)</option>
+                <option value="devnet">Devnet (Testing)</option>
+                <option value="testnet">Testnet (Staging)</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-2">
+                {localSettings.solana_network === 'mainnet-beta' && 'Production network - Real SOL'}
+                {localSettings.solana_network === 'devnet' && 'Test network - Free test SOL available'}
+                {localSettings.solana_network === 'testnet' && 'Staging network - Test transactions'}
+              </p>
+            </div>
+
+            <label className="flex items-center justify-between cursor-pointer">
+              <span className="text-sm">Use Custom RPC Endpoint</span>
+              <input
+                type="checkbox"
+                checked={localSettings.use_custom_rpc}
+                onChange={(e) => setLocalSettings(s => ({ ...s, use_custom_rpc: e.target.checked }))}
+                className="toggle"
+              />
+            </label>
+
+            {localSettings.use_custom_rpc && (
+              <div>
+                <label className="block text-sm text-gray-400 mb-2">Custom RPC URL</label>
+                <input
+                  type="text"
+                  placeholder="https://api.mainnet-beta.solana.com"
+                  value={localSettings.custom_rpc_url}
+                  onChange={(e) => setLocalSettings(s => ({ ...s, custom_rpc_url: e.target.value }))}
+                  className="w-full bg-dark-700 rounded-lg px-4 py-2 border border-dark-600"
+                />
+                <p className="text-xs text-gray-500 mt-2">
+                  Enter a custom Solana RPC endpoint URL. Useful for private RPC services or dedicated endpoints.
+                </p>
+              </div>
+            )}
+
+            <div className="bg-dark-700 rounded-lg p-3">
+              <p className="text-xs text-gray-400">
+                <span className="font-semibold">Current Endpoint:</span>
+                <br />
+                {localSettings.use_custom_rpc && localSettings.custom_rpc_url
+                  ? localSettings.custom_rpc_url
+                  : `https://api.${localSettings.solana_network}.solana.com`}
+              </p>
+            </div>
           </div>
         </section>
 
