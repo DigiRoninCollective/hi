@@ -1547,9 +1547,37 @@ class InteractiveCLI {
 
     let amount: number;
     if (amountStr.toLowerCase() === 'all') {
-      // TODO: Get token balance
-      console.log('Selling all tokens...');
-      amount = 1000000000; // Large number for all
+      // Get actual token balance
+      console.log('Fetching token balance...');
+      try {
+        const walletKeypair = Keypair.fromSecretKey(bs58.decode(wallet.privateKey));
+        const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(
+          walletKeypair.publicKey,
+          { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
+        );
+
+        let tokenBalance = 0;
+        for (const acc of tokenAccounts.value) {
+          const parsed = acc.account.data.parsed.info;
+          if (parsed.mint === mintAddress) {
+            tokenBalance = parsed.tokenAmount.uiAmount || 0;
+            break;
+          }
+        }
+
+        if (tokenBalance <= 0) {
+          console.log('No tokens found for this mint address.');
+          await this.prompt('Press Enter to continue...');
+          return;
+        }
+
+        console.log(`Token balance: ${tokenBalance.toLocaleString()} tokens`);
+        amount = tokenBalance;
+      } catch (error: any) {
+        console.log(`Error fetching token balance: ${error.message}`);
+        await this.prompt('Press Enter to continue...');
+        return;
+      }
     } else {
       amount = parseFloat(amountStr);
       if (isNaN(amount) || amount <= 0) {
