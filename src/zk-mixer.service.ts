@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+// @ts-ignore - snarkjs lacks type definitions
 import { groth16 } from 'snarkjs';
 import { ZkMixerConfig } from './types';
 

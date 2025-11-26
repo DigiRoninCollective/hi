@@ -133,14 +133,15 @@ async function main() {
       });
     }
   } catch (error) {
-    console.error('Failed to check wallet balance:', error);
+    console.warn('⚠️  Failed to check wallet balance:', error);
     eventBus.emit(EventType.SYSTEM_ERROR, {
       component: 'pumpportal',
       message: 'Failed to check wallet balance',
       error: String(error),
     });
-    console.error('Make sure your Solana RPC URL is correct and accessible.');
-    process.exit(1);
+    console.warn('⚠️  Make sure your Solana RPC URL is correct and accessible.');
+    console.warn('⚠️  Continuing with Telegram bot... Check RPC connectivity when trading.');
+    // Don't exit - allow Telegram to continue
 }
 
 function emitAnalysisEvent(eventBus: EventBus, tweet: TweetData, analysis: any, status: string): void {
