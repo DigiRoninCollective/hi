@@ -1,0 +1,149 @@
+version: '3.8'
+
+services:
+  pumpfun-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pumpfun-bot
+    restart: unless-stopped
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+    # Environment variables
+    environment:
+      # Supabase
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+
+      # Twitter
+      - TWITTER_ENABLED=${TWITTER_ENABLED:-false}
+      - TWITTER_API_KEY=${TWITTER_API_KEY}
+      - TWITTER_API_SECRET=${TWITTER_API_SECRET}
+      - TWITTER_ACCESS_TOKEN=${TWITTER_ACCESS_TOKEN}
+      - TWITTER_ACCESS_SECRET=${TWITTER_ACCESS_SECRET}
+      - TWITTER_BEARER_TOKEN=${TWITTER_BEARER_TOKEN}
+      - TWITTER_USERNAMES=${TWITTER_USERNAMES}
+      - TWITTER_HASHTAGS=${TWITTER_HASHTAGS}
+
+      # Solana
+      - SOLANA_PRIVATE_KEY=${SOLANA_PRIVATE_KEY}
+      - SOLANA_RPC_URL=${SOLANA_RPC_URL}
+      - SOLANA_WS_URL=${SOLANA_WS_URL}
+
+      # PumpFun
+      - PUMPPORTAL_API_KEY=${PUMPPORTAL_API_KEY}
+      - PUMPFUN_SDK_ENABLED=${PUMPFUN_SDK_ENABLED:-true}
+      - PUMPFUN_DEFAULT_SLIPPAGE_BPS=${PUMPFUN_DEFAULT_SLIPPAGE_BPS:-1000}
+      - PUMPFUN_PRIORITY_FEE=${PUMPFUN_PRIORITY_FEE:-250000}
+
+      # Token Launch
+      - DEFAULT_TOKEN_DECIMALS=${DEFAULT_TOKEN_DECIMALS:-6}
+      - DEFAULT_INITIAL_BUY_SOL=${DEFAULT_INITIAL_BUY_SOL:-0.1}
+
+      # Groq AI
+      - GROQ_ENABLED=${GROQ_ENABLED:-true}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GROQ_MODEL=${GROQ_MODEL:-llama-3.1-8b-instant}
+      - GROQ_SUGGESTION_COUNT=${GROQ_SUGGESTION_COUNT:-2}
+      - GROQ_AUTO_DEPLOY=${GROQ_AUTO_DEPLOY:-false}
+      - GROQ_TEMPERATURE=${GROQ_TEMPERATURE:-0.2}
+      - GROQ_MAX_TOKENS=${GROQ_MAX_TOKENS:-256}
+
+      # SSE Server
+      - SSE_PORT=${SSE_PORT:-3000}
+      - SSE_CORS_ORIGIN=${SSE_CORS_ORIGIN:-*}
+
+      # Alerting
+      - ALERTING_ENABLED=${ALERTING_ENABLED:-true}
+      - ALERT_CONSOLE_OUTPUT=${ALERT_CONSOLE_OUTPUT:-true}
+      - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_URL}
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+
+      # Classifier
+      - CLASSIFIER_MIN_CONFIDENCE=${CLASSIFIER_MIN_CONFIDENCE:-0.6}
+      - CLASSIFIER_MAX_RISK=${CLASSIFIER_MAX_RISK:-0.7}
+      - TRUSTED_USERS=${TRUSTED_USERS}
+
+      # Alpha Aggregator - Telegram
+      - ALPHA_TELEGRAM_ENABLED=${ALPHA_TELEGRAM_ENABLED:-true}
+      - ALPHA_TELEGRAM_BOT_TOKEN=${ALPHA_TELEGRAM_BOT_TOKEN}
+      - ALPHA_TELEGRAM_POLLING=${ALPHA_TELEGRAM_POLLING:-true}
+      - ALPHA_TELEGRAM_BOT_NAME=${ALPHA_TELEGRAM_BOT_NAME:-AlphaRaptorBot}
+      - ALPHA_TELEGRAM_BOT_DESCRIPTION=${ALPHA_TELEGRAM_BOT_DESCRIPTION:-Advanced alpha signal aggregator}
+      - TELEGRAM_ADMIN_ID=${TELEGRAM_ADMIN_ID}
+
+      # Alpha Aggregator - Discord
+      - ALPHA_DISCORD_ENABLED=${ALPHA_DISCORD_ENABLED:-false}
+      - ALPHA_DISCORD_BOT_TOKEN=${ALPHA_DISCORD_BOT_TOKEN}
+      - ALPHA_DISCORD_CHANNELS=${ALPHA_DISCORD_CHANNELS}
+
+      # Alpha Aggregator - Reddit
+      - ALPHA_REDDIT_ENABLED=${ALPHA_REDDIT_ENABLED:-false}
+      - ALPHA_REDDIT_CLIENT_ID=${ALPHA_REDDIT_CLIENT_ID}
+      - ALPHA_REDDIT_CLIENT_SECRET=${ALPHA_REDDIT_CLIENT_SECRET}
+      - ALPHA_REDDIT_USERNAME=${ALPHA_REDDIT_USERNAME}
+      - ALPHA_REDDIT_PASSWORD=${ALPHA_REDDIT_PASSWORD}
+      - ALPHA_REDDIT_USER_AGENT=${ALPHA_REDDIT_USER_AGENT}
+      - ALPHA_REDDIT_SUBREDDITS=${ALPHA_REDDIT_SUBREDDITS}
+      - ALPHA_REDDIT_POLL_INTERVAL=${ALPHA_REDDIT_POLL_INTERVAL:-30000}
+
+      # Alpha Classifier
+      - ALPHA_MIN_CONFIDENCE=${ALPHA_MIN_CONFIDENCE:-0.5}
+      - ALPHA_MAX_RISK=${ALPHA_MAX_RISK:-0.7}
+      - ALPHA_LAUNCH_KEYWORDS=${ALPHA_LAUNCH_KEYWORDS}
+      - ALPHA_SPAM_KEYWORDS=${ALPHA_SPAM_KEYWORDS}
+      - ALPHA_TRUSTED_CHANNELS=${ALPHA_TRUSTED_CHANNELS}
+      - ALPHA_TRUSTED_USERS=${ALPHA_TRUSTED_USERS}
+
+      # Bundler
+      - BUNDLER_ENABLED=${BUNDLER_ENABLED:-false}
+      - JITO_ENABLED=${JITO_ENABLED:-false}
+      - JITO_TIP_LAMPORTS=${JITO_TIP_LAMPORTS:-10000}
+      - JITO_BLOCK_ENGINE_URL=${JITO_BLOCK_ENGINE_URL:-https://mainnet.block-engine.jito.wtf}
+
+      # Raydium
+      - RAYDIUM_ENABLED=${RAYDIUM_ENABLED:-false}
+      - RAYDIUM_AUTO_LP=${RAYDIUM_AUTO_LP:-false}
+      - RAYDIUM_LP_SOL_AMOUNT=${RAYDIUM_LP_SOL_AMOUNT:-1.0}
+
+    # Port mapping
+    ports:
+      - "3000:3000"
+
+    # Volume mounting
+    volumes:
+      - bot-data:/app/data
+      - bot-logs:/app/logs
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Network
+    networks:
+      - bot-network
+
+volumes:
+  bot-data:
+    driver: local
+  bot-logs:
+    driver: local
+
+networks:
+  bot-network:
+    driver: bridge
