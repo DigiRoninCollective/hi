@@ -66,7 +66,7 @@ export default function TelegramAdminPage() {
   const [broadcastAlertType, setBroadcastAlertType] = useState<'tokenLaunches' | 'highPrioritySignals' | 'systemAlerts'>('tokenLaunches')
   const [sendingBroadcast, setSendingBroadcast] = useState(false)
   const [showBotToken, setShowBotToken] = useState(false)
-  const [botToken, setBotToken] = useState('')
+  const [botToken] = useState('')
 
 
   const isAdmin = user?.role === 'admin'

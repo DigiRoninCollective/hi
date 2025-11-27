@@ -33,7 +33,7 @@ import {
   formatErrorResponse,
 } from './security.middleware';
 import { getPlatformSettings, getLaunchPreferencesDb, listWalletPool } from './database.service';
-import { decryptSecret } from './crypto.util';
+import { decryptSecret } from './utils/crypto.util';
 import bs58 from 'bs58';
 import { Keypair } from '@solana/web3.js';
 import { getLaunchCandidate, updateLaunchStatus } from './launch-cache';
@@ -1295,6 +1295,47 @@ ${urls?.length ? `*Links:* ${urls.join(', ')}` : ''}
     }
 
     res.json({ wallets: tradingManager.listWallets() });
+  });
+
+  // Create token with local signing (user signs transaction in browser)
+  router.post('/tokens/create-local', authMiddleware(false), async (req: AuthenticatedRequest, res: Response): Promise<Response | void> => {
+    try {
+      const { txData, privateKey } = req.body;
+
+      if (!txData || !privateKey) {
+        return res.status(400).json({ error: 'Transaction data and private key are required' });
+      }
+
+      // Import required modules for transaction signing
+      const { VersionedTransaction, Keypair, Connection } = require('@solana/web3.js');
+      const bs58 = require('bs58');
+
+      // Decode transaction
+      const txBuffer = new Uint8Array(txData);
+      const tx = VersionedTransaction.deserialize(txBuffer);
+
+      // Decode private key (base58)
+      const signerKeypair = Keypair.fromSecretKey(bs58.decode(privateKey));
+
+      // Sign transaction
+      tx.sign([signerKeypair]);
+
+      // Send transaction
+      const rpcUrl = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
+      const connection = new Connection(rpcUrl, 'confirmed');
+      const signature = await connection.sendTransaction(tx);
+
+      res.json({
+        success: true,
+        signature,
+        explorerUrl: `https://solscan.io/tx/${signature}`
+      });
+    } catch (error) {
+      console.error('[LOCAL_SIGN] Error:', error);
+      res.status(500).json({
+        error: error instanceof Error ? error.message : 'Failed to sign and send transaction'
+      });
+    }
   });
 
   return router;

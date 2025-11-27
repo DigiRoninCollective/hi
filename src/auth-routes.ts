@@ -28,7 +28,7 @@ import {
   deactivateWalletPool,
 } from './database.service';
 import { WalletPoolInsert } from './database.types';
-import { encryptSecret } from './crypto.util';
+import { encryptSecret } from './utils/crypto.util';
 
 export function createAuthRoutes(): Router {
   const router = Router();

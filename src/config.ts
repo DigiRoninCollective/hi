@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 import { Config } from './types';
 import { SSEServerConfig } from './sse-server';
-import { AlertConfig } from './alerting';
+import { AlertConfig } from './services/notifications/alerting';
 import { ClassifierConfig } from './classifier';
 import { AlphaAggregatorConfig, AlphaClassifierConfig } from './alpha-aggregator.service';
 import { DiscordConfig } from './discord.service';
