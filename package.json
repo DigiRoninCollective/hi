@@ -4,8 +4,9 @@
   "description": "Twitter-triggered PumpFun token launcher via PumpPortal with Web UI",
   "main": "dist/index.js",
   "scripts": {
-    "start": "ts-node start.ts",
-    "launcher": "ts-node start.ts",
+    "startup": "concurrently --names \"BACKEND,FRONTEND\" --prefix \"[{name}]\" --prefix-colors \"blue,cyan\" --handle-input \"npm run dev\" \"npm run dev:web\"",
+    "start": "ts-node scripts/start.ts",
+    "launcher": "ts-node scripts/start.ts",
     "cli": "ts-node src/cli.ts",
     "bot": "ts-node src/index.ts",
     "build": "tsc",
@@ -25,9 +26,9 @@
     "mcp": "ts-node src/mcp-server.ts",
     "db:push": "node scripts/apply-supabase-migrations.js",
     "watch": "tsc -w",
-    "setup": "ts-node start.ts",
-    "wallet:new": "ts-node src/generate-wallet.ts",
-    "wallet:vanity": "ts-node src/vanity-wallet.ts",
+    "setup": "ts-node scripts/start.ts",
+    "wallet:new": "ts-node src/utils/generate-wallet.ts",
+    "wallet:vanity": "ts-node src/utils/vanity-wallet.ts",
     "desktop:pack": "npm run build:web && electron-builder"
   },
   "keywords": [
