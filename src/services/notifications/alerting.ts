@@ -1,5 +1,5 @@
 import fetch from 'node-fetch';
-import { EventBus, EventType, AlertEvent, TokenEvent, LaunchEvent } from './events';
+import { EventBus, EventType, AlertEvent, TokenEvent, LaunchEvent } from '../../events';
 
 export interface AlertConfig {
   enabled: boolean;

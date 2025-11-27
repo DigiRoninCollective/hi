@@ -2,6 +2,7 @@ import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import { Rocket, Home, Zap, MessageSquare, Settings, LogOut, LogIn, TrendingUp, LayoutDashboard, MessageCircle, HelpCircle, Wallet, History, AlertTriangle, Server } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { WalletConnector } from './WalletConnector'
 
 export default function Layout() {
   const location = useLocation()
@@ -46,6 +47,7 @@ export default function Layout() {
     { path: '/', label: 'Home', icon: Home },
     { path: '/control', label: 'Control', icon: LayoutDashboard },
     { path: '/deploy', label: 'Deploy', icon: Rocket },
+    { path: '/create-local', label: 'Create (Local)', icon: Rocket },
     { path: '/feed', label: 'Feed', icon: MessageSquare },
     { path: '/alpha', label: 'Alpha', icon: TrendingUp },
     { path: '/portfolio', label: 'Portfolio', icon: Wallet },
@@ -116,6 +118,9 @@ export default function Layout() {
                   {connected ? 'Connected' : 'Disconnected'}
                 </span>
               </div>
+
+              {/* Wallet Connector */}
+              <WalletConnector />
 
               {/* User Menu */}
               {isLoading ? (

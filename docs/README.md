@@ -1,123 +1,3 @@
-# Documentation
-
-This directory contains all project documentation organized by topic.
-
-## 📁 Folders
-
-### `pumpfun/` - PumpFun Pump Portal API Documentation
-
-Complete research and implementation guide for integrating PumpFun trading functionality.
-
-**Files:**
-- `PUMPFUN_DOCS_README.md` - **START HERE** - Navigation guide and quick reference
-- `PUMPFUN_API_RESEARCH.md` - Complete technical reference (35 KB, 1,276 lines)
-- `PUMPFUN_QUICKSTART.md` - Working code examples and templates (19 KB, 828 lines)
-- `PUMPFUN_API_SCHEMAS.md` - Technical specifications and schemas (16 KB, 756 lines)
-- `PUMPFUN_API_INDEX.md` - Integration planning and timeline (13 KB, 481 lines)
-- `PUMPFUN_RESEARCH_SUMMARY.txt` - Executive summary (12 KB, 382 lines)
-
-**Quick Start:**
-```bash
-# Read the navigation guide first
-cat pumpfun/PUMPFUN_DOCS_README.md
-
-# Then choose which file to read based on your needs:
-# - PUMPFUN_API_RESEARCH.md (full reference)
-# - PUMPFUN_QUICKSTART.md (code examples)
-# - PUMPFUN_API_SCHEMAS.md (technical specs)
-```
-
-**Package Stats:**
-- Total: 100 KB | 4,022+ lines
-- 50+ code examples
-- 20+ verified sources
-- 4 integration patterns
-- Production-ready security practices
-
----
-
-## 📚 Documentation Structure
-
-```
-docs/
-├── README.md (this file)
-└── pumpfun/
-    ├── PUMPFUN_DOCS_README.md ⭐ Navigation guide
-    ├── PUMPFUN_API_RESEARCH.md 📋 Main reference
-    ├── PUMPFUN_QUICKSTART.md 🚀 Code examples
-    ├── PUMPFUN_API_SCHEMAS.md 📊 Technical specs
-    ├── PUMPFUN_API_INDEX.md 📖 Integration guide
-    └── PUMPFUN_RESEARCH_SUMMARY.txt 📄 Executive summary
-```
-
----
-
-## 🎯 How to Use
-
-### For Quick Testing (5 minutes)
-1. Read: `pumpfun/PUMPFUN_DOCS_README.md`
-2. Jump to: `pumpfun/PUMPFUN_QUICKSTART.md` - Template 1
-3. Copy the code
-4. Test on devnet
-
-### For Implementation (1-2 hours)
-1. Read: `pumpfun/PUMPFUN_API_INDEX.md` - Integration section
-2. Review: `pumpfun/PUMPFUN_API_RESEARCH.md` - Relevant sections
-3. Copy: Code from `pumpfun/PUMPFUN_QUICKSTART.md`
-4. Adapt: For your system
-
-### For Production (4 weeks)
-1. Follow: Timeline in `pumpfun/PUMPFUN_API_INDEX.md`
-2. Reference: `pumpfun/PUMPFUN_API_RESEARCH.md` - Full details
-3. Use: Code templates from `pumpfun/PUMPFUN_QUICKSTART.md`
-4. Check: `pumpfun/PUMPFUN_API_SCHEMAS.md` - For spec details
-
----
-
-## 🔑 Key Resources
-
-### Official API
-- PumpPortal: https://pumpportal.fun/
-- Trading API: https://pumpportal.fun/trading-api/
-- Data API: https://pumpportal.fun/data-api/real-time/
-
-### Community SDKs
-- [thetateman/Pump-Fun-API](https://github.com/thetateman/Pump-Fun-API)
-- [Synthexlab/pumpfun-sdk](https://github.com/Synthexlab/pumpfun-sdk)
-- [cryptoscan-pro/pumpfun-sdk](https://github.com/cryptoscan-pro/pumpfun-sdk)
-
-### Guides & Tutorials
-- [Chainstack Guide](https://docs.chainstack.com/docs/solana-creating-a-pumpfun-bot)
-- [QuickNode Guide](https://www.quicknode.com/guides/solana-development/tooling/web3-2/pump-fun-api)
-- [Bitquery Integration](https://docs.bitquery.io/docs/blockchain/Solana/Pumpfun/pump-fun-to-pump-swap/)
-
----
-
-## 🛠️ Environment Setup
-
-```bash
-# Install dependencies
-npm install @solana/web3.js @solana/spl-token bs58
-
-# Create .env file (NEVER commit!)
-SOLANA_PRIVATE_KEY=your_base58_private_key_here
-PUMP_WALLET_ADDRESS=your_wallet_address_here
-PUMP_API_KEY=your_pumpportal_api_key_here
-RPC_URL=https://api.mainnet-beta.solana.com
-
-# For devnet testing
-RPC_URL=https://api.devnet.solana.com
-```
-
----
-
-## ⚠️ Security Rules
-
-**ALWAYS:**
-- ✅ Use Local Transaction API (sign locally)
-- ✅ Store keys in secure vault (AWS KMS, 1Password)
-- ✅ Implement transaction simulation
-- ✅ Rate limit API calls
 
 **NEVER:**
 - ❌ Transmit private keys to API
@@ -187,3 +67,70 @@ RPC_URL=https://api.devnet.solana.com
 **Last Updated:** November 25, 2025
 **Status:** ✅ Production Ready
 **Total Size:** 100 KB | 4,022+ lines
+# Documentation
+
+All Markdown docs now live in `docs/`. The main project overview that used to be in the repository root is now `docs/PROJECT_README.md` (run commands there from the repo root).
+
+## Project docs
+- `PROJECT_README.md` - Primary project overview, setup, and API details (moved from root)
+- `QUICK_START.md` - High-level commands to install, build, and run
+- `QUICK_START_MINT_KEYS.md` - Mint-keys quick start flow
+- `IMPLEMENTATION_SUMMARY.md` / `IMPLEMENTATION_COMPLETE.md` - Implementation status and milestones
+- `PROJECT_STATUS.md` / `CHANGES_SUMMARY.md` - Current status and change log
+- `APIS_AND_SERVICES.md` - Service/API inventory
+- `TESTING_GUIDE.md` - Test plan and coverage notes
+- `SECURITY.md` - Security practices and risk notes
+- `KEYPAIR_ARCHITECTURE.md` / `KEYPAIR_IMPLEMENTATION_INDEX.md` / `KEYPAIR_MANAGEMENT_GUIDE.md` - Key management architecture and guides
+- `DATABASE_SETUP_COMPLETE.md` / `CROSS_PLATFORM_DEPLOYMENT.md` / `ELECTRON_FEATURES_PLAN.md` - Deployment and platform plans
+- `TWITTER_FEED_ENHANCEMENTS.md` / `TWEET_METADATA_GUIDE.md` / `GITHUB_ACTIONS_BUILDS.md` - Feature and CI/CD references
+
+## PumpFun docs
+- `pumpfun/PUMPFUN_DOCS_README.md` - **START HERE** navigation guide
+- `pumpfun/PUMPFUN_API_RESEARCH.md` - Full technical reference (35 KB, 1,276 lines)
+- `pumpfun/PUMPFUN_QUICKSTART.md` - Working code examples and templates
+- `pumpfun/PUMPFUN_API_SCHEMAS.md` - Technical specifications and schemas
+- `pumpfun/PUMPFUN_API_INDEX.md` - Integration planning and timeline
+- `pumpfun/PUMPFUN_RESEARCH_SUMMARY.txt` - Executive summary
+
+**PumpFun quick start:**
+```bash
+# Read the navigation guide
+cat pumpfun/PUMPFUN_DOCS_README.md
+
+# Jump to the file you need:
+# - pumpfun/PUMPFUN_API_RESEARCH.md  (full reference)
+# - pumpfun/PUMPFUN_QUICKSTART.md    (code examples)
+# - pumpfun/PUMPFUN_API_SCHEMAS.md   (specs)
+```
+
+## Structure
+
+```
+docs/
+├── PROJECT_README.md
+├── QUICK_START.md
+├── QUICK_START_MINT_KEYS.md
+├── IMPLEMENTATION_SUMMARY.md
+├── IMPLEMENTATION_COMPLETE.md
+├── PROJECT_STATUS.md
+├── CHANGES_SUMMARY.md
+├── APIS_AND_SERVICES.md
+├── TESTING_GUIDE.md
+├── SECURITY.md
+├── KEYPAIR_ARCHITECTURE.md
+├── KEYPAIR_IMPLEMENTATION_INDEX.md
+├── KEYPAIR_MANAGEMENT_GUIDE.md
+├── DATABASE_SETUP_COMPLETE.md
+├── CROSS_PLATFORM_DEPLOYMENT.md
+├── ELECTRON_FEATURES_PLAN.md
+├── TWITTER_FEED_ENHANCEMENTS.md
+├── TWEET_METADATA_GUIDE.md
+├── GITHUB_ACTIONS_BUILDS.md
+└── pumpfun/
+    ├── PUMPFUN_DOCS_README.md
+    ├── PUMPFUN_API_RESEARCH.md
+    ├── PUMPFUN_QUICKSTART.md
+    ├── PUMPFUN_API_SCHEMAS.md
+    ├── PUMPFUN_API_INDEX.md
+    └── PUMPFUN_RESEARCH_SUMMARY.txt
+```
