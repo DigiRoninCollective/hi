@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import prompts from 'prompts';
-import { runLocalFlow, runTradeFlow, Answers, Mode } from './trade-wizard';
+import { runLocalFlow, Answers } from './trade-wizard';
 
 function onCancel(): never {
   console.log('Cancelled.');
@@ -16,35 +16,19 @@ async function main(): Promise<void> {
   const response = await prompts(
     [
       {
-        type: 'select',
-        name: 'mode',
-        message: 'Mode',
-        choices: [
-          { title: 'Trade (API signs)', value: 'trade' },
-          { title: 'Local (your wallet signs)', value: 'local' },
-        ],
-        initial: 0,
-      },
-      {
-        type: (prev: Mode) => (prev === 'trade' ? 'text' : null),
-        name: 'apiKey',
-        message: 'PumpPortal API key',
-        initial: process.env.PUMPPORTAL_API_KEY || '',
-      },
-      {
-        type: (prev: Mode) => (prev === 'local' ? 'password' : null),
+        type: 'password',
         name: 'privateKey',
         message: 'Solana private key (base58)',
         initial: process.env.SOLANA_PRIVATE_KEY || '',
       },
       {
-        type: (prev: Mode) => (prev === 'local' ? 'text' : null),
+        type: 'text',
         name: 'publicKey',
         message: 'Solana public key (base58)',
         initial: process.env.SOLANA_PUBLIC_KEY || '',
       },
       {
-        type: (prev: Mode) => (prev === 'local' ? 'text' : null),
+        type: 'text',
         name: 'rpcUrl',
         message: 'RPC URL',
         initial: process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
@@ -104,8 +88,6 @@ async function main(): Promise<void> {
   );
 
   const answers: Answers = {
-    mode: response.mode,
-    apiKey: response.apiKey,
     privateKey: response.privateKey,
     publicKey: response.publicKey,
     rpcUrl: response.rpcUrl,
@@ -119,11 +101,7 @@ async function main(): Promise<void> {
     mayhem: response.mayhem,
   };
 
-  if (answers.mode === 'trade') {
-    await runTradeFlow(answers);
-  } else {
-    await runLocalFlow(answers);
-  }
+  await runLocalFlow(answers);
 }
 
 main().catch((err) => {

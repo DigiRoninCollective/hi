@@ -1,6 +1,6 @@
 import { useWallet } from '@solana/wallet-adapter-react'
 import { useDesktopWallet } from '../hooks/useDesktopWallet'
-import { useConnect, useDisconnect, useModal } from '@phantom/react-sdk'
+import { useAccounts, useConnect, useDisconnect } from '@phantom/react-sdk'
 import { Wallet, Plus, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
 
 /**
@@ -21,9 +21,9 @@ export function WalletConnector() {
   const { publicKey: adapterPublicKey, connected: adapterConnected } = useWallet()
 
   // Phantom React SDK hooks
-  const { connect, connecting, accounts } = useConnect()
-  const { disconnect } = useDisconnect()
-  const { open: openModal } = useModal()
+  const { connect, isConnecting } = useConnect()
+  const { disconnect, isDisconnecting } = useDisconnect()
+  const accounts = useAccounts()
 
   // Desktop wallet management
   const { connection: desktopConnection, isLoading, error, isDesktop, loadKeypairFile, disconnect: desktopDisconnect } = useDesktopWallet()
@@ -126,16 +126,16 @@ export function WalletConnector() {
   // Try Phantom SDK first, fallback to wallet adapter modal
   return (
     <button
-      onClick={() => openModal()}
-      disabled={connecting}
+      onClick={() => connect().catch(() => undefined)}
+      disabled={isConnecting || isDisconnecting}
       className="flex items-center gap-2 px-4 py-2 bg-accent-green hover:bg-green-500 text-dark-900 rounded-lg transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
     >
-      {connecting ? (
+      {isConnecting ? (
         <Loader2 className="w-4 h-4 animate-spin" />
       ) : (
         <Wallet className="w-4 h-4" />
       )}
-      {connecting ? 'Connecting...' : 'Connect Wallet'}
+      {isConnecting ? 'Connecting...' : 'Connect Wallet'}
     </button>
   )
 }

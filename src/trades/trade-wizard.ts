@@ -5,17 +5,13 @@ import { stdin as input, stdout as output } from 'node:process';
 import path from 'path';
 import { readFile } from 'fs/promises';
 import { Connection, Keypair, VersionedTransaction } from '@solana/web3.js';
-import bs58 from 'bs58';
 import { fetch, FormData } from 'undici';
-
-export type Mode = 'trade' | 'local';
+import { loadKeypairFromSecret } from '../utils/secure-wallet';
 
 export interface Answers {
-  mode: Mode;
-  apiKey?: string;
-  privateKey?: string;
+  privateKey: string;
   publicKey?: string;
-  rpcUrl?: string;
+  rpcUrl: string;
   imagePath: string;
   name: string;
   symbol: string;
@@ -44,9 +40,6 @@ async function askYesNo(prompt: string, defaultValue: boolean): Promise<boolean>
 }
 
 async function gatherAnswers(): Promise<Answers> {
-  const modeInput = (await ask('Mode [trade/local]', 'trade')).toLowerCase();
-  const mode: Mode = modeInput === 'local' ? 'local' : 'trade';
-
   const name = await ask('Token name', 'PPTest');
   const symbol = await ask('Token symbol', 'TEST');
   const description = await ask('Description', 'This is an example token created via PumpPortal.fun');
@@ -56,15 +49,10 @@ async function gatherAnswers(): Promise<Answers> {
   const slippage = Number(await ask('Slippage (bps)', '10'));
   const mayhem = await askYesNo('Enable Mayhem Mode?', false);
 
-  if (mode === 'trade') {
-    const apiKey = await ask('PumpPortal API key', process.env.PUMPPORTAL_API_KEY || '');
-    return { mode, apiKey, imagePath, name, symbol, description, amount, priorityFee, slippage, mayhem };
-  }
-
   const privateKey = await ask('Solana private key (base58)', process.env.SOLANA_PRIVATE_KEY || '');
   const publicKey = await ask('Solana public key (base58)', process.env.SOLANA_PUBLIC_KEY || '');
   const rpcUrl = await ask('RPC URL', process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com');
-  return { mode, privateKey, publicKey, rpcUrl, imagePath, name, symbol, description, amount, priorityFee, slippage, mayhem };
+  return { privateKey, publicKey, rpcUrl, imagePath, name, symbol, description, amount, priorityFee, slippage, mayhem };
 }
 
 export async function uploadMetadata(
@@ -99,40 +87,9 @@ export async function uploadMetadata(
   };
 }
 
-export async function runTradeFlow(answers: Answers): Promise<void> {
-  if (!answers.apiKey) throw new Error('PumpPortal API key is required.');
-
-  const mintKeypair = Keypair.generate();
-  const tokenMetadata = await uploadMetadata(answers.imagePath, answers.name, answers.symbol, answers.description);
-
-  const response = await fetch(`https://pumpportal.fun/api/trade?api-key=${answers.apiKey}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      action: 'create',
-      tokenMetadata,
-      mint: bs58.encode(mintKeypair.secretKey),
-      denominatedInSol: true,
-      amount: answers.amount,
-      slippage: answers.slippage,
-      priorityFee: answers.priorityFee,
-      pool: 'pump',
-      isMayhemMode: answers.mayhem,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`trade create failed: ${response.status} ${await response.text()}`);
-  }
-
-  const data = await response.json() as any;
-  console.log('Mint:', mintKeypair.publicKey.toBase58());
-  console.log('Transaction:', `https://solscan.io/tx/${data.signature}`);
-}
-
 export async function runLocalFlow(answers: Answers): Promise<void> {
   if (!answers.privateKey) throw new Error('SOLANA_PRIVATE_KEY is required.');
-  const signerKeyPair = Keypair.fromSecretKey(bs58.decode(answers.privateKey));
+  const signerKeyPair = loadKeypairFromSecret(answers.privateKey);
   const publicKey = answers.publicKey || signerKeyPair.publicKey.toBase58();
   const connection = new Connection(answers.rpcUrl || 'https://api.mainnet-beta.solana.com', 'confirmed');
 
@@ -180,11 +137,7 @@ export async function runLocalFlow(answers: Answers): Promise<void> {
 
 async function main(): Promise<void> {
   const answers = await gatherAnswers();
-  if (answers.mode === 'trade') {
-    await runTradeFlow(answers);
-  } else {
-    await runLocalFlow(answers);
-  }
+  await runLocalFlow(answers);
 }
 
 main().catch((err) => {

@@ -1,21 +1,17 @@
 import 'dotenv/config';
-import { Keypair } from '@solana/web3.js';
-import bs58 from 'bs58';
+import { Connection, Keypair, VersionedTransaction } from '@solana/web3.js';
 import { readFile } from 'fs/promises';
 import { fetch, FormData } from 'undici';
 import { Blob } from 'buffer';
+import { loadKeypairFromEnv } from '../utils/secure-wallet';
 
-const API_KEY = process.env.PUMPPORTAL_API_KEY;
 const IMAGE_PATH = process.env.TOKEN_IMAGE_PATH || './example.png';
-
-function requireEnv(name: string, value: string | undefined): string {
-  if (!value) {
-    throw new Error(`Missing required env var: ${name}`);
-  }
-  return value;
-}
+const RPC_ENDPOINT = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
 
 async function sendCreateTx(): Promise<void> {
+  const creator = loadKeypairFromEnv();
+  const connection = new Connection(RPC_ENDPOINT, 'confirmed');
+
   // Generate a random keypair for token
   const mintKeypair = Keypair.generate();
 
@@ -43,20 +39,21 @@ async function sendCreateTx(): Promise<void> {
 
   const metadataResponseJSON = await metadataResponse.json() as any;
 
-  // Send the create transaction via PumpPortal trade API
-  const response = await fetch(`https://pumpportal.fun/api/trade?api-key=${requireEnv('PUMPPORTAL_API_KEY', API_KEY)}`, {
+  // Request a locally signable transaction from PumpPortal
+  const response = await fetch('https://pumpportal.fun/api/trade-local', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       action: 'create',
+      publicKey: creator.publicKey.toBase58(),
       tokenMetadata: {
         name: metadataResponseJSON.metadata.name,
         symbol: metadataResponseJSON.metadata.symbol,
         uri: metadataResponseJSON.metadataUri,
       },
-      mint: bs58.encode(mintKeypair.secretKey),
+      mint: mintKeypair.publicKey.toBase58(),
       denominatedInSol: true,
       amount: 1, // Dev buy of 1 SOL
       slippage: 10,
@@ -70,9 +67,18 @@ async function sendCreateTx(): Promise<void> {
     throw new Error(`trade create failed: ${response.status} ${await response.text()}`);
   }
 
-  const data = await response.json() as any;
+  const tx = VersionedTransaction.deserialize(new Uint8Array(await response.arrayBuffer()));
+  tx.sign([mintKeypair, creator]);
+
+  const signature = await connection.sendTransaction(tx, {
+    skipPreflight: false,
+    preflightCommitment: 'confirmed',
+    maxRetries: 3,
+  });
+  await connection.confirmTransaction(signature, 'confirmed');
+
   console.log('Mint:', mintKeypair.publicKey.toBase58());
-  console.log('Transaction:', `https://solscan.io/tx/${data.signature}`);
+  console.log('Transaction:', `https://solscan.io/tx/${signature}`);
 }
 
 sendCreateTx().catch((err) => {

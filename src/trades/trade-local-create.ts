@@ -1,23 +1,14 @@
 import 'dotenv/config';
 import { Connection, Keypair, VersionedTransaction } from '@solana/web3.js';
-import bs58 from 'bs58';
 import { readFile } from 'fs/promises';
 import { Blob } from 'buffer';
+import { loadKeypairFromEnv } from '../utils/secure-wallet';
 
 const RPC_ENDPOINT = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
-const PRIVATE_KEY = process.env.SOLANA_PRIVATE_KEY;
-const PUBLIC_KEY = process.env.SOLANA_PUBLIC_KEY;
 const IMAGE_PATH = process.env.TOKEN_IMAGE_PATH || './example.png';
 
-function requireEnv(name: string, value: string | undefined): string {
-  if (!value) {
-    throw new Error(`Missing required env var: ${name}`);
-  }
-  return value;
-}
-
 async function sendLocalCreateTx(): Promise<void> {
-  const signerKeyPair = Keypair.fromSecretKey(bs58.decode(requireEnv('SOLANA_PRIVATE_KEY', PRIVATE_KEY)));
+  const signerKeyPair = loadKeypairFromEnv();
   const web3Connection = new Connection(RPC_ENDPOINT, 'confirmed');
 
   // Generate a random keypair for token mint
@@ -52,7 +43,7 @@ async function sendLocalCreateTx(): Promise<void> {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      publicKey: requireEnv('SOLANA_PUBLIC_KEY', PUBLIC_KEY),
+      publicKey: signerKeyPair.publicKey.toBase58(),
       action: 'create',
       tokenMetadata: {
         name: metadataResponseJSON.metadata.name,
