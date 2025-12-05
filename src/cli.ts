@@ -1545,11 +1545,45 @@ class InteractiveCLI {
 
     const amountStr = await this.prompt('Token amount to sell (or "all"): ');
 
+    let walletKeypair: Keypair;
+    try {
+      walletKeypair = Keypair.fromSecretKey(bs58.decode(wallet.privateKey));
+    } catch (error) {
+      console.log('Invalid wallet keypair.');
+      await this.prompt('Press Enter to continue...');
+      return;
+    }
+
     let amount: number;
     if (amountStr.toLowerCase() === 'all') {
-      // TODO: Get token balance
-      console.log('Selling all tokens...');
-      amount = 1000000000; // Large number for all
+      console.log('\nFetching token balance...');
+
+      try {
+        const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(
+          walletKeypair.publicKey,
+          { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
+        );
+
+        const account = tokenAccounts.value.find(
+          acc => acc.account.data.parsed.info.mint === mintAddress
+        );
+
+        const tokenAmount = account?.account.data.parsed.info.tokenAmount;
+        const balance = tokenAmount?.uiAmount ?? 0;
+
+        if (!account || !balance || balance <= 0) {
+          console.log('No balance found for this token.');
+          await this.prompt('Press Enter to continue...');
+          return;
+        }
+
+        amount = balance;
+        console.log(`Selling all tokens (${amount.toLocaleString()} units)...`);
+      } catch (error) {
+        console.log('Unable to fetch token balance.');
+        await this.prompt('Press Enter to continue...');
+        return;
+      }
     } else {
       amount = parseFloat(amountStr);
       if (isNaN(amount) || amount <= 0) {
