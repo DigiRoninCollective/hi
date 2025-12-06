@@ -5,7 +5,9 @@
 # For Oracle Cloud (Always Free), DigitalOcean, AWS, or any Linux VPS
 ################################################################################
 
-set -e
+set -euo pipefail
+
+DEFAULT_BRANCH="main"
 
 # Colors for output
 RED='\033[0;31m'
@@ -17,7 +19,7 @@ NC='\033[0m' # No Color
 # Configuration
 PROJECT_NAME="pumpfun-bot"
 REPO_URL="${REPO_URL:-https://github.com/DigiRoninCollective/hi.git}"
-BRANCH="${BRANCH:-main}"
+BRANCH="${BRANCH:-$DEFAULT_BRANCH}"
 DEPLOY_DIR="/opt/pumpfun-bot"
 SERVICE_NAME="pumpfun-bot"
 
@@ -167,23 +169,43 @@ install_nodejs() {
 clone_repository() {
     print_header "Cloning Repository"
 
+    local target_branch
+    target_branch=$(resolve_branch)
+
     if [[ -d "$DEPLOY_DIR" ]]; then
         print_warning "Directory $DEPLOY_DIR already exists"
         read -p "Pull latest changes? (y/n) " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             cd "$DEPLOY_DIR"
-            git fetch origin
-            git checkout $BRANCH
-            git pull origin $BRANCH
+            git fetch origin "$target_branch"
+            git checkout "$target_branch"
+            git pull --ff-only origin "$target_branch"
             print_success "Repository updated"
         fi
     else
         mkdir -p "$DEPLOY_DIR"
-        git clone -b $BRANCH "$REPO_URL" "$DEPLOY_DIR"
+        git clone --branch "$target_branch" --single-branch "$REPO_URL" "$DEPLOY_DIR"
         cd "$DEPLOY_DIR"
         print_success "Repository cloned to $DEPLOY_DIR"
     fi
+}
+
+resolve_branch() {
+    local requested_branch="$BRANCH"
+
+    if git ls-remote --exit-code --heads "$REPO_URL" "$requested_branch" > /dev/null 2>&1; then
+        echo "$requested_branch"
+        return 0
+    fi
+
+    if [[ "$requested_branch" != "$DEFAULT_BRANCH" ]] && git ls-remote --exit-code --heads "$REPO_URL" "$DEFAULT_BRANCH" > /dev/null 2>&1; then
+        print_warning "Branch '$requested_branch' not found. Falling back to '$DEFAULT_BRANCH'."
+        echo "$DEFAULT_BRANCH"
+        return 0
+    fi
+
+    print_error "Branch '$requested_branch' not found in $REPO_URL."
 }
 
 create_env_file() {
