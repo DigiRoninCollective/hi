@@ -17,7 +17,7 @@ NC='\033[0m' # No Color
 # Configuration
 PROJECT_NAME="pumpfun-bot"
 REPO_URL="${REPO_URL:-https://github.com/DigiRoninCollective/hi.git}"
-BRANCH="${BRANCH:-claude/check-project-progress-01CDH5JEqF9KtD3iUNkp2vqx}"
+BRANCH="${BRANCH:-main}"
 DEPLOY_DIR="/opt/pumpfun-bot"
 SERVICE_NAME="pumpfun-bot"
 

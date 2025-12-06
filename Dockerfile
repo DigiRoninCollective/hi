@@ -10,14 +10,17 @@ RUN apk add --no-cache python3 make g++
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install dependencies (include devDependencies for the build)
+RUN npm ci
 
 # Copy source code
 COPY . .
 
 # Compile TypeScript
 RUN npm run build
+
+# Remove devDependencies from the final node_modules
+RUN npm prune --omit=dev
 
 # Stage 2: Runtime
 FROM node:22-alpine
