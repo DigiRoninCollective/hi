@@ -7,14 +7,54 @@ interface User {
 }
 
 interface UserSettings {
-  theme: 'dark' | 'light' | 'system'
-  image_layout: 'grid' | 'list' | 'compact'
-  card_width: number
-  notifications_enabled: boolean
-  sound_enabled: boolean
-  auto_deploy_enabled: boolean
-  default_buy_amount: number
-  default_platform: string
+  // UI & Appearance
+  theme?: 'dark' | 'light' | 'system'
+  image_layout?: 'grid' | 'list' | 'compact'
+  card_width?: number
+  show_balance_in_usd?: boolean
+  number_format?: 'comma' | 'space' | 'none'
+  show_testnet_warning?: boolean
+
+  // Notifications & Alerts
+  notifications_enabled?: boolean
+  sound_enabled?: boolean
+  large_transaction_alert?: boolean
+  large_transaction_threshold?: number
+  high_slippage_alert?: boolean
+  high_slippage_threshold?: number
+
+  // Trading & Deployment
+  auto_deploy_enabled?: boolean
+  default_buy_amount?: number
+  default_platform?: string
+  slippage_tolerance?: number
+  transaction_priority?: 'low' | 'normal' | 'high' | 'custom'
+  custom_priority_fee?: number
+  simulate_transactions?: boolean
+
+  // Auto-sell & Take-profit
+  auto_sell_enabled?: boolean
+  auto_sell_percentage?: number
+  take_profit_enabled?: boolean
+  take_profit_targets?: string
+  stop_loss_enabled?: boolean
+  stop_loss_percentage?: number
+
+  // Solana Network
+  solana_network?: 'mainnet-beta' | 'devnet' | 'testnet'
+  custom_rpc_url?: string
+  use_custom_rpc?: boolean
+
+  // External Services
+  birdeye_api_key?: string
+  blockscout_api_key?: string
+  alchemy_api_key?: string
+
+  // Data & Backup
+  export_settings_frequency?: 'never' | 'daily' | 'weekly' | 'manual'
+  auto_export_transactions?: boolean
+  export_transaction_frequency?: 'never' | 'weekly' | 'monthly' | 'manual'
+  clear_cache_on_exit?: boolean
 }
 
 interface AuthContextType {

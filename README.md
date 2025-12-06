@@ -1,313 +1,387 @@
 # PumpFun Twitter Launcher
 
-A TypeScript/Node.js service that monitors Twitter for token launch commands and automatically creates tokens on PumpFun via PumpPortal. Now includes a full **Web UI** for manual token deployment and real-time feed monitoring (Discord/Telegram style).
+A powerful, automated token launcher for PumpFun that monitors Twitter/X for launch signals and creates tokens with AI-powered intelligence.
 
-## Features
+**Live token deployment** • **Multi-source alpha signals** • **Local transaction signing** • **Web UI & CLI**
 
-- **Web UI**: Dark-themed token deployment interface with real-time feed
-- **Manual Token Deploy**: Deploy tokens directly from the browser
-- **Twitter Feed**: Discord/Telegram-style live feed of tweets and events
-- **Twitter Stream Monitoring**: Real-time monitoring of tweets from specific users or hashtags via Twitter API v2
-- **Tweet Classification**: ML-inspired classifier with confidence scoring, spam detection, and risk assessment
-- **Launch Command Parsing**: Detects patterns like `$LAUNCH DOGE2` or `#LAUNCH PEPE`
-- **Automatic Token Creation**: Creates tokens on PumpFun via PumpPortal's API
-- **Transaction Signing**: Signs and sends Solana transactions using your bot wallet
-- **SSE Event Streaming**: Real-time Server-Sent Events for monitoring and dashboards
-- **Multi-Channel Alerting**: Console, Discord, Telegram, and webhook notifications
+---
 
-## Prerequisites
+## 🚀 Quick Start
 
-- Node.js 18+
-- Twitter Developer Account with API v2 access (filtered stream permissions)
-- Solana wallet with SOL for gas fees
-- PumpPortal API key
+### Prerequisites
+- **Node.js 18+** - [Download](https://nodejs.org/)
+- **Environment files** - Copy `.env.example` to `.env` and fill in your keys
 
-## Installation
+### Start the App (3 seconds)
 
+**macOS/Linux:**
 ```bash
-npm install
+./start.sh
 ```
 
-## Configuration
+**Windows:**
+```bash
+start.bat
+```
 
-Copy `.env.example` to `.env` and fill in your credentials:
+**Or via npm:**
+```bash
+npm run startup
+```
 
+Then open: **http://localhost:5173**
+
+---
+
+## 📋 What You Get
+
+### Features
+- ✅ **Twitter Monitoring** - Watch tweets for token launch signals
+- ✅ **AI Intelligence** - Groq LLM analyzes tweets and suggests token names
+- ✅ **Multi-Source Alpha** - Aggregate signals from Discord, Telegram, Reddit
+- ✅ **Web UI** - Beautiful dashboard for token deployment
+- ✅ **Local Signing** - Sign transactions in your browser with private key
+- ✅ **Auto Trading** - Dev buy, slippage control, MEV protection (Jito)
+- ✅ **Real-Time Updates** - WebSocket SSE for live feeds
+- ✅ **Desktop App** - Electron wrapper for native experience
+
+### Supported Platforms
+- 🌐 **Web** - Browser-based UI
+- 🖥️ **Desktop** - Native Electron app (Windows, macOS, Linux)
+- ⌨️ **CLI** - Command-line interface
+
+---
+
+## 🎯 Use Cases
+
+### 1. **Deploy Tokens (Web UI)**
+Navigate to `/deploy` or `/create-local`:
+- Fill in token details (name, symbol, image)
+- Connect your wallet or use private key
+- Deploy directly to PumpFun
+
+### 2. **Monitor Twitter**
+Navigate to `/feed`:
+- See live Twitter feed
+- AI analyzes tweets
+- Click to deploy suggested tokens
+
+### 3. **Multi-Source Signals**
+Navigate to `/alpha`:
+- Aggregate Discord, Telegram, Reddit signals
+- Risk classification
+- Trusted channel filtering
+
+---
+
+## 📦 Setup Guide
+
+### 1. Clone & Install
+```bash
+git clone https://github.com/DigiRoninCollective/hi.git
+cd hi
+npm install
+cd web && npm install && cd ..
+```
+
+### 2. Environment Variables
+
+**Create `.env` file:**
 ```bash
 cp .env.example .env
 ```
 
-### Environment Variables
+**Required variables:**
+```env
+# Solana
+SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
+SOLANA_PRIVATE_KEY=your_base58_private_key
 
-#### Required
+# PumpPortal (API keys you have)
+PUMPPORTAL_API_KEY=your_api_key
+PUMPPORTAL_WALLET_PUBLIC_KEY=your_public_key
+PUMPPORTAL_WALLET_PRIVATE_KEY=your_private_key
 
-| Variable | Description |
-|----------|-------------|
-| `TWITTER_API_KEY` | Twitter API key (required when `TWITTER_ENABLED=true`) |
-| `TWITTER_API_SECRET` | Twitter API secret (required when `TWITTER_ENABLED=true`) |
-| `TWITTER_ACCESS_TOKEN` | Twitter access token (required when `TWITTER_ENABLED=true`) |
-| `TWITTER_ACCESS_SECRET` | Twitter access secret (required when `TWITTER_ENABLED=true`) |
-| `TWITTER_BEARER_TOKEN` | Twitter bearer token (required when `TWITTER_ENABLED=true`) |
-| `SOLANA_PRIVATE_KEY` | Base58 encoded Solana private key |
-| `PUMPPORTAL_API_KEY` | PumpPortal API key |
-| `PUMPPORTAL_WS_ENABLED` | false | Enable PumpPortal Data websocket |
-| `PUMPPORTAL_WS_SUBSCRIBE_NEW_TOKENS` | true | Subscribe to new token events |
-| `PUMPPORTAL_WS_TOKEN_MINTS` | - | Comma-separated mints to monitor trades |
-| `PUMPPORTAL_WS_ACCOUNTS` | - | Comma-separated accounts to monitor trades |
-| `PUMPPORTAL_WS_SUBSCRIBE_MIGRATION` | false | Subscribe to migration events |
-| `DEFAULT_BUY_FEE_BPS` | 150 | Default fee (bps) on buys when no DB setting exists |
-| `DEFAULT_SELL_FEE_BPS` | 150 | Default fee (bps) on sells when no DB setting exists |
-| `PLATFORM_FEE_WALLET` | GAffyNL3KmejcYgVtVDg5zhs2Deeptg8BgE9EYN4WzrD | Destination wallet for platform fees |
-| `ENCRYPTION_KEY` | - | 32-byte AES key (hex or base64) for encrypting wallet pools |
-| `SUPABASE_DB_URL` | - | Postgres connection string for migrations (used by scripts/apply-supabase-migrations.js) |
+# Database (Supabase)
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your_anon_key
 
-> Note: The Solana 1.x SDK (via PumpFun/Raydium/Jito deps) pulls `bigint-buffer` (GHSA-3gc7-fjrx-p6mg). No patched 1.x release exists yet; functional impact is low because web3 uses it on fixed-size fields. Upgrade when upstream publishes a fix.
+# AI/LLM (Groq)
+GROQ_API_KEY=gsk_...
+GROQ_ENABLED=true
 
-#### Optional
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TWITTER_ENABLED` | true | Set to `false` to run without Twitter streaming (skips all Twitter API keys) |
-| `TWITTER_USERNAMES` | - | Comma-separated usernames to monitor |
-| `TWITTER_HASHTAGS` | - | Comma-separated hashtags to monitor |
-| `SOLANA_RPC_URL` | mainnet | Solana RPC endpoint |
-| `SSE_PORT` | 3000 | SSE server port |
-| `DISCORD_WEBHOOK_URL` | - | Discord webhook for alerts |
-| `TELEGRAM_BOT_TOKEN` | - | Telegram bot token |
-| `TELEGRAM_CHAT_ID` | - | Telegram chat ID |
-| `CLASSIFIER_MIN_CONFIDENCE` | 0.6 | Minimum confidence to trigger launch |
-| `CLASSIFIER_MAX_RISK` | 0.7 | Maximum risk score allowed |
-| `TRUSTED_USERS` | - | Users that bypass risk checks |
-| `GROQ_ENABLED` | false | Enable Groq-powered tweet analysis for ticker/name suggestions |
-| `GROQ_API_KEY` | - | Groq API key (required when `GROQ_ENABLED=true`) |
-| `GROQ_MODEL` | llama-3.1-8b-instant | Primary Groq model to use (fast) |
-| `GROQ_SECONDARY_MODEL` | - | Optional secondary Groq model for extra suggestions (e.g., llama-3.1-70b-versatile) |
-| `GROQ_SUGGESTION_COUNT` | 2 | Max Groq suggestions to consider per tweet |
-| `GROQ_AUTO_DEPLOY` | true | When true, Groq suggestions enter the normal auto-deploy flow |
-| `GROQ_TEMPERATURE` | 0.2 | Sampling temperature for Groq calls |
-| `GROQ_MAX_TOKENS` | 256 | Max tokens for Groq responses |
-| `ZK_MIXER_ENABLED` | false | Enable Groth16 (bn254) proof verification for mixer withdrawals |
-| `ZK_MIXER_ARTIFACT_DIR` | ../ZCDOS/circuits/zk-mixer/target | Path to verification_key.json/wasm/ACIR |
-| `ZK_MIXER_NULLIFIER_STORE` | ./zk-nullifiers.json | File to persist used nullifier hashes |
-
-## Usage
-
-### Quick Start (with Web UI)
-
-```bash
-# Install dependencies
-npm install
-
-# Build backend
-npm run build
-
-# Build frontend
-npm run build:web
-
-# Start the server
-npm start
+# Social (Optional)
+TWITTER_ENABLED=false  # Enable when you have API access
+TWITTER_BEARER_TOKEN=your_token
 ```
 
-Then open http://localhost:3000 in your browser.
+See `.env.example` for all options.
+
+### 3. Copy to Web
+```bash
+cp .env web/.env
+```
+
+### 4. Run It
+```bash
+./start.sh    # Unix/macOS
+start.bat     # Windows
+npm run startup  # Any platform
+```
+
+---
+
+## 🎮 Navigation
+
+### Main Pages
+
+| Page | Purpose | Route |
+|------|---------|-------|
+| **Home** | Dashboard & wallet connection | `/` |
+| **Deploy** | Create tokens (simple form) | `/deploy` |
+| **Create (Local)** | Create with private key signing | `/create-local` |
+| **Feed** | Live Twitter feed with AI | `/feed` |
+| **Alpha** | Multi-source signals | `/alpha` |
+| **Control** | Advanced controls | `/control` |
+| **Settings** | User preferences & config | `/settings` |
+| **Portfolio** | View your tokens | `/portfolio` |
+| **Help** | Feature documentation | `/help` |
+
+---
+
+## 🔧 Architecture
+
+```
+PumpFun Twitter Launcher
+├── Backend (Node.js + Express)
+│   ├── Twitter monitoring
+│   ├── Signal classification
+│   ├── Token creation
+│   └── Transaction signing
+│
+├── Frontend (React + Vite)
+│   ├── Web UI
+│   ├── Wallet connection
+│   ├── Token forms
+│   └── Live feeds
+│
+└── Desktop (Electron)
+    └── Native app wrapper
+```
+
+### Tech Stack
+- **Backend:** Node.js, Express, TypeScript
+- **Frontend:** React, TypeScript, Tailwind CSS, Vite
+- **Database:** Supabase (PostgreSQL)
+- **Blockchain:** Solana Web3.js, PumpPortal API
+- **AI:** Groq LLM
+- **Desktop:** Electron
+- **Build:** TypeScript, concurrently
+
+---
+
+## 📁 Project Structure
+
+```
+/
+├── README.md                 # This file
+├── package.json             # Root dependencies
+├── tsconfig.json            # TypeScript config
+├── start.sh / start.bat      # Quick startup scripts
+├── .env                      # Configuration (gitignored)
+├── .env.example              # Configuration template
+│
+├── src/                      # Backend (Node.js)
+│   ├── index.ts             # Main bot entry
+│   ├── cli.ts               # CLI tool
+│   ├── api-routes.ts        # API endpoints
+│   ├── services/            # Business logic
+│   ├── utils/               # Utilities
+│   ├── trades/              # Trading scripts
+│   └── ...
+│
+├── web/                      # Frontend (React)
+│   ├── src/
+│   │   ├── pages/           # Page components
+│   │   ├── components/      # Reusable components
+│   │   ├── context/         # Context providers
+│   │   └── hooks/           # Custom hooks
+│   ├── package.json         # Frontend deps
+│   └── .env                 # Frontend config
+│
+├── desktop/                  # Electron app
+│   └── main.js              # Electron entry
+│
+├── docs/                     # Documentation
+│   ├── STARTUP.md           # Detailed startup guide
+│   ├── QUICK_START.md       # Quick reference
+│   ├── PROJECT_STATUS.md    # Current status
+│   └── ...
+│
+└── scripts/                  # Utility scripts
+    ├── start.ts             # Setup script
+    ├── groq-*.mjs           # LLM helpers
+    └── test-groq.mjs        # Testing
+```
+
+---
+
+## 🚀 Common Commands
 
 ### Development
-
-**Backend only:**
 ```bash
+npm run dev              # Run backend
+npm run dev:web          # Run frontend
+npm run startup          # Run both
+npm run build            # Compile TypeScript
+npm run watch            # Watch mode
+```
+
+### Deployment
+```bash
+npm run build:all        # Build everything
+npm run start:prod       # Run production backend
+npm run desktop          # Build desktop app
+npm run desktop:pack     # Package for distribution
+```
+
+### Tools
+```bash
+npm run cli              # CLI interface
+npm run bot              # Run bot
+npm run wallet:new       # Generate wallet
+npm run wallet:vanity    # Vanity wallet generator
+npm run create:wizard    # Token creation wizard
+```
+
+---
+
+## 📚 Documentation
+
+Detailed guides available in `/docs`:
+
+- **[STARTUP.md](docs/STARTUP.md)** - Complete startup and troubleshooting
+- **[QUICK_START.md](docs/QUICK_START.md)** - Quick reference guide
+- **[PROJECT_STATUS.md](docs/PROJECT_STATUS.md)** - Current features and status
+- **[RESEARCH_SUMMARY.txt](docs/RESEARCH_SUMMARY.txt)** - Technical research notes
+
+---
+
+## 🔐 Security
+
+### Best Practices
+- ✅ Never commit `.env` files (gitignored)
+- ✅ Use strong RPC endpoints (Helius, QuickNode, not public)
+- ✅ Keep private keys secure and rotate regularly
+- ✅ Use dedicated wallets for testing
+- ✅ Enable 2FA on API accounts
+
+### Important Notes
+- Private keys are used **only for signing** transactions
+- Keys are **never sent to our servers**
+- Transaction signing happens **in your browser**
+- Clear your browser cache after use
+
+---
+
+## 🐛 Troubleshooting
+
+### "Port already in use"
+```bash
+# Kill processes on ports 3000 and 5173
+lsof -ti:3000,5173 | xargs kill -9
+```
+
+### "Module not found"
+```bash
+rm -rf node_modules web/node_modules
+npm install && cd web && npm install && cd ..
+```
+
+### "Build errors"
+```bash
+npm run build  # Check for TypeScript errors
+```
+
+### "Frontend won't load"
+```bash
+cd web
+npm install
 npm run dev
 ```
 
-**Frontend development (with hot reload):**
-```bash
-# Terminal 1: Start backend
-npm run dev
+See [STARTUP.md](docs/STARTUP.md) for more troubleshooting.
 
-# Terminal 2: Start frontend dev server
-npm run dev:web
-```
+---
 
-The frontend dev server runs on port 5173 and proxies API requests to the backend on port 3000.
-
-### Production
-
-```bash
-npm run build:all  # Builds both backend and frontend
-npm start
-```
-
-### Apply Supabase migrations without Supabase CLI
-
-```bash
-# Install dependency once
-npm install pg
-
-# Run migrations (uses supabase/migrations/*.sql)
-SUPABASE_DB_URL="postgresql://postgres:<password>@db.<ref>.supabase.co:5432/postgres" npm run db:push
-```
-
-### MCP server (Claude Desktop / MCP clients)
-
-```bash
-npm install @modelcontextprotocol/sdk
-npm run mcp  # starts stdio MCP server exposing health/config/wallet/launch tools
-```
-
-## Web Interface
-
-The web UI provides three main pages:
-
-### Home (`/`)
-- Overview of features
-- Quick access to Deploy and Feed
-- Live stats (when connected)
-
-### Token Deploy (`/deploy`)
-- **Token Name/Symbol**: Enter your token details (auto-ticker generation)
-- **Description**: Optional token description
-- **Website/Twitter**: Links for your token
-- **Platform Selection**: Choose deployment platform (PumpFun, etc.)
-- **Buy Amount**: Initial buy amount in SOL
-- **Image Upload**: Drag & drop or paste from clipboard
-- **Mayhem Mode**: Toggle for aggressive settings
-- **Multi-Deploy**: Deploy multiple tokens at once
-- **Auto-sell**: Automatic sell toggle
-
-### Live Feed (`/feed`)
-- **Discord/Telegram-style feed**: Real-time event stream
-- **Twitter accounts**: Add/remove watched accounts
-- **Filters**: Filter by tweets, launches, alerts, system events
-- **Notifications**: Browser notifications for important events
-- Click on tokens/transactions to view on PumpFun/Solscan
-
-## API Endpoints
-
-Once running, the following endpoints are available:
-
-### Core Endpoints
-| Endpoint | Description |
-|----------|-------------|
-| `GET /health` | Health check with client count |
-| `GET /events` | SSE stream of all events |
-| `GET /events/:types` | SSE stream of specific event types |
-| `GET /api/events` | Get event history (JSON) |
-| `GET /api/stats` | Classifier and system statistics |
-
-### Token Endpoints
-| Endpoint | Description |
-|----------|-------------|
-| `POST /api/tokens/create` | Create a new token |
-| `GET /api/tokens` | List created tokens |
-| `GET /api/tokens/:mint` | Get token by mint address |
-| `POST /api/tokens/:mint/buy` | Buy tokens |
-| `POST /api/tokens/:mint/sell` | Sell tokens |
-
-### Utility Endpoints
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/wallet` | Get wallet address and balance |
-| `GET /api/status` | Get system status |
-| `POST /api/upload/image` | Upload image (base64) |
-
-### SSE Event Types
-
-```typescript
-// Tweet events
-tweet:received    // New tweet from monitored source
-tweet:filtered    // Tweet filtered out by classifier
-tweet:classified  // Tweet classification result
-
-// Launch events
-launch:detected   // Valid launch command detected
-
-// Token events
-token:creating    // Token creation started
-token:created     // Token created successfully
-token:failed      // Token creation failed
-
-// Alert events
-alert:info / alert:warning / alert:error / alert:success
-
-// System events
-system:started / system:stopped / system:error
-```
-
-### Example: Connect to SSE Stream
-
-```javascript
-const evtSource = new EventSource('http://localhost:3000/events');
-
-evtSource.addEventListener('launch:detected', (e) => {
-  const data = JSON.parse(e.data);
-  console.log(`Launch detected: ${data.data.ticker}`);
-});
-
-evtSource.addEventListener('token:created', (e) => {
-  const data = JSON.parse(e.data);
-  console.log(`Token created: ${data.data.mint}`);
-});
-```
-
-## Launch Command Formats
-
-The service recognizes these patterns in tweets:
-
-- `$LAUNCH TICKER` - e.g., `$LAUNCH DOGE2`
-- `$LAUNCH TICKER Name` - e.g., `$LAUNCH PEPE2 Pepe Returns`
-- `#LAUNCH TICKER` - e.g., `#LAUNCH MOON`
-- `Launching $TICKER` - e.g., `Launching $ROCKET`
-- `Launch $TICKER` - e.g., `Launch $BASED`
-
-## Architecture
+## 📊 API Endpoints
 
 ```
-├── src/                    # Backend (Node.js/TypeScript)
-│   ├── index.ts           # Main entry point and orchestration
-│   ├── config.ts          # Configuration loading
-│   ├── types.ts           # TypeScript type definitions
-│   ├── events.ts          # Event bus and event types
-│   ├── twitter.ts         # Twitter stream service
-│   ├── parser.ts          # Tweet parsing and command extraction
-│   ├── classifier.ts      # Tweet classification and filtering
-│   ├── pumpportal.ts      # PumpPortal API integration
-│   ├── sse-server.ts      # SSE server + static file serving
-│   ├── api-routes.ts      # REST API routes for web UI
-│   └── alerting.ts        # Multi-channel alerting service
-│
-└── web/                    # Frontend (React/Vite/Tailwind)
-    ├── src/
-    │   ├── App.tsx        # Main app with routing
-    │   ├── pages/
-    │   │   ├── HomePage.tsx        # Landing page
-    │   │   ├── TokenDeployPage.tsx # Token deployment UI
-    │   │   └── FeedPage.tsx        # Live feed (Discord-style)
-    │   └── components/
-    │       └── Layout.tsx          # App layout with navigation
-    └── public/             # Static assets
+GET  /api/status              # Health check
+GET  /api/tokens              # List tokens
+POST /api/tokens/create       # Create token
+POST /api/tokens/create-local # Create with local signing
+GET  /api/feed                # Twitter feed
+POST /api/groq/suggest        # AI suggestions
+GET  /api/wallet              # Wallet info
 ```
 
-### Data Flow
+---
 
-```
-Twitter Stream (Ingestion)
-        │
-        ▼
-  Tweet Parser
-        │
-        ▼
-   Classifier ──────► Event Bus ──────► SSE Clients
-        │                   │
-        ▼                   ▼
-  PumpPortal           Alerting
-  (Token Creation)     (Notifications)
-```
+## 🤝 Contributing
 
-## Security Notes
+This is a specialized tool for token launching. Contributions welcome!
 
-- Never commit your `.env` file
-- Use a dedicated bot wallet, not your main wallet
-- Monitor your wallet balance to prevent unexpected losses
-- The classifier helps filter spam and high-risk tweets
-- Trusted users bypass risk checks - use carefully
+Areas for improvement:
+- Additional blockchain support
+- More signal sources
+- Enhanced UI/UX
+- Performance optimizations
+- Better error handling
 
-## License
+---
 
-MIT
+## 📄 License
+
+MIT License - See repo for details
+
+---
+
+## 🆘 Support
+
+### Getting Help
+1. Check [STARTUP.md](docs/STARTUP.md) for common issues
+2. Review [PROJECT_STATUS.md](docs/PROJECT_STATUS.md) for current features
+3. Check browser console (F12) for frontend errors
+4. Review terminal output for backend errors
+
+### Reporting Issues
+Create an issue with:
+- Error message
+- Steps to reproduce
+- Environment details
+- Screenshots (if applicable)
+
+---
+
+## 🎯 Next Steps
+
+1. **Setup** - Follow the Quick Start above
+2. **Configure** - Fill in your `.env` variables
+3. **Test** - Create a test token on devnet first
+4. **Deploy** - Launch tokens to mainnet
+5. **Monitor** - Watch your tokens on PumpFun/Solscan
+
+---
+
+## 📞 Contact
+
+- **GitHub:** [DigiRoninCollective/hi](https://github.com/DigiRoninCollective/hi)
+- **Issues:** [Report bugs](https://github.com/DigiRoninCollective/hi/issues)
+- **Discussions:** [Ask questions](https://github.com/DigiRoninCollective/hi/discussions)
+
+---
+
+**Built with ❤️ for the Solana community**
+
+*Last updated: November 27, 2025*

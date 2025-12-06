@@ -81,30 +81,6 @@ interface LaunchPreferences {
   topUpAmount: number
 }
 
-interface GroqAnalysis {
-  shouldLaunch: boolean
-  confidence: number
-  score1to10: number
-  reason: string
-  tokenName: string
-  tokenTicker: string
-  theme: string
-  tone: string
-  keywordsDetected?: string[]
-  riskFlags?: string[]
-  nsfwOrSensitive?: boolean
-}
-
-type LaunchStatus =
-  | 'candidate'
-  | 'queued'
-  | 'launched'
-  | 'skipped-classifier'
-  | 'skipped-policy'
-  | 'skipped-manual'
-  | 'analysis-missing'
-  | 'failed'
-
 interface ConfigInfo {
   mode: string
   seedBuyEnabled: boolean

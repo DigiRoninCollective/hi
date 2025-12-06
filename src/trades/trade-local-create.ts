@@ -1,25 +1,20 @@
 import 'dotenv/config';
-import { Keypair } from '@solana/web3.js';
-import bs58 from 'bs58';
+import { Connection, Keypair, VersionedTransaction } from '@solana/web3.js';
 import { readFile } from 'fs/promises';
-import { fetch, FormData } from 'undici';
 import { Blob } from 'buffer';
+import { loadKeypairFromEnv } from '../utils/secure-wallet';
 
-const API_KEY = process.env.PUMPPORTAL_API_KEY;
+const RPC_ENDPOINT = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
 const IMAGE_PATH = process.env.TOKEN_IMAGE_PATH || './example.png';
 
-function requireEnv(name: string, value: string | undefined): string {
-  if (!value) {
-    throw new Error(`Missing required env var: ${name}`);
-  }
-  return value;
-}
+async function sendLocalCreateTx(): Promise<void> {
+  const signerKeyPair = loadKeypairFromEnv();
+  const web3Connection = new Connection(RPC_ENDPOINT, 'confirmed');
 
-async function sendCreateTx(): Promise<void> {
-  // Generate a random keypair for token
+  // Generate a random keypair for token mint
   const mintKeypair = Keypair.generate();
 
-  // Define token metadata
+  // Prepare metadata upload with an image
   const imageBuffer = await readFile(IMAGE_PATH);
   const formData = new FormData();
   formData.append('file', new Blob([imageBuffer], { type: 'image/png' }), IMAGE_PATH.split('/').pop() || 'image.png');
@@ -31,7 +26,6 @@ async function sendCreateTx(): Promise<void> {
   formData.append('website', 'https://pumpportal.fun');
   formData.append('showName', 'true');
 
-  // Create IPFS metadata storage
   const metadataResponse = await fetch('https://pump.fun/api/ipfs', {
     method: 'POST',
     body: formData,
@@ -43,39 +37,48 @@ async function sendCreateTx(): Promise<void> {
 
   const metadataResponseJSON = await metadataResponse.json() as any;
 
-  // Send the create transaction via PumpPortal trade API
-  const response = await fetch(`https://pumpportal.fun/api/trade?api-key=${requireEnv('PUMPPORTAL_API_KEY', API_KEY)}`, {
+  const response = await fetch('https://pumpportal.fun/api/trade-local', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
+      publicKey: signerKeyPair.publicKey.toBase58(),
       action: 'create',
       tokenMetadata: {
         name: metadataResponseJSON.metadata.name,
         symbol: metadataResponseJSON.metadata.symbol,
         uri: metadataResponseJSON.metadataUri,
       },
-      mint: bs58.encode(mintKeypair.secretKey),
+      mint: mintKeypair.publicKey.toBase58(),
       denominatedInSol: true,
-      amount: 1, // Dev buy of 1 SOL
+      amount: 1, // dev buy of 1 SOL
       slippage: 10,
       priorityFee: 0.0005,
       pool: 'pump',
-      isMayhemMode: false, // optional, defaults to false
+      isMayhemMode: false,
     }),
   });
 
   if (!response.ok) {
-    throw new Error(`trade create failed: ${response.status} ${await response.text()}`);
+    throw new Error(`trade-local failed: ${response.status} ${await response.text()}`);
   }
 
-  const data = await response.json() as any;
-  console.log('Mint:', mintKeypair.publicKey.toBase58());
-  console.log('Transaction:', `https://solscan.io/tx/${data.signature}`);
+  const tx = VersionedTransaction.deserialize(new Uint8Array(await response.arrayBuffer()));
+  tx.sign([mintKeypair, signerKeyPair]);
+
+  const signature = await web3Connection.sendTransaction(tx, {
+    skipPreflight: false,
+    preflightCommitment: 'confirmed',
+    maxRetries: 3,
+  });
+  await web3Connection.confirmTransaction(signature, 'confirmed');
+
+  console.log('Mint address:', mintKeypair.publicKey.toBase58());
+  console.log('Transaction:', `https://solscan.io/tx/${signature}`);
 }
 
-sendCreateTx().catch((err) => {
+sendLocalCreateTx().catch((err) => {
   console.error(err);
   process.exit(1);
 });

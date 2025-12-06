@@ -2,6 +2,13 @@ const { app, BrowserWindow, nativeTheme, shell, ipcMain } = require('electron');
 const path = require('path');
 const isDev = process.argv.includes('dev');
 
+// Import IPC handlers (if compiled from TypeScript)
+try {
+  require('./ipc-handlers.js');
+} catch (err) {
+  console.warn('IPC handlers not loaded (may be compiled separately)');
+}
+
 let mainWindow = null;
 
 function createWindow() {
@@ -20,6 +27,9 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
+    // In production, files are in the asar.
+    // __dirname in production points to app.asar/desktop
+    // web/dist is at app.asar/web/dist
     const indexPath = path.join(__dirname, '..', 'web', 'dist', 'index.html');
     mainWindow.loadFile(indexPath);
   }
