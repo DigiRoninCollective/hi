@@ -12,10 +12,10 @@
 
 import 'dotenv/config';
 import { Keypair, Connection, LAMPORTS_PER_SOL, VersionedTransaction } from '@solana/web3.js';
-import bs58 from 'bs58';
 import { readFile } from 'fs/promises';
 import { fetch } from 'undici';
 import { Blob } from 'buffer';
+import { loadKeypairFromEnv } from '../utils/secure-wallet';
 
 // Dynamic imports for ESM modules
 const ora = require('ora').default;
@@ -81,7 +81,7 @@ async function createTokenWithSpinner() {
 
     // Step 3: Load deployer wallet
     spinner.start(chalk.blue('🔑 Loading deployer wallet...'));
-    const signerKeyPair = Keypair.fromSecretKey(bs58.decode(DEPLOYER_PRIVATE_KEY!));
+    const signerKeyPair = loadKeypairFromEnv();
     spinner.succeed(chalk.green(`✅ Wallet loaded: ${chalk.yellow(signerKeyPair.publicKey.toBase58().slice(0, 8))}...`));
 
     // Step 4: Check balance

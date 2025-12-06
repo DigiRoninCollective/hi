@@ -5,7 +5,9 @@
 # For Oracle Cloud (Always Free), DigitalOcean, AWS, or any Linux VPS
 ################################################################################
 
-set -e
+set -euo pipefail
+
+DEFAULT_BRANCH="main"
 
 # Colors for output
 RED='\033[0;31m'
@@ -17,7 +19,7 @@ NC='\033[0m' # No Color
 # Configuration
 PROJECT_NAME="pumpfun-bot"
 REPO_URL="${REPO_URL:-https://github.com/DigiRoninCollective/hi.git}"
-BRANCH="${BRANCH:-claude/check-project-progress-01CDH5JEqF9KtD3iUNkp2vqx}"
+BRANCH="${BRANCH:-$DEFAULT_BRANCH}"
 DEPLOY_DIR="/opt/pumpfun-bot"
 SERVICE_NAME="pumpfun-bot"
 
@@ -135,18 +137,11 @@ install_git() {
 }
 
 install_nodejs() {
-    print_header "Installing Node.js 22 (Optional - for local development)"
+    print_header "Ensuring Node.js 22 (includes npm) is available"
 
-    if command -v node &> /dev/null; then
+    if command -v node &> /dev/null && command -v npm &> /dev/null; then
         print_success "Node.js is already installed"
-        node --version
-        return 0
-    fi
-
-    print_warning "Node.js not required for Docker deployment, but useful for development"
-    read -p "Install Node.js 22? (y/n) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Node $(node --version) / npm $(npm --version)"
         return 0
     fi
 
@@ -159,13 +154,24 @@ install_nodejs() {
             curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
             yum install -y nodejs
             ;;
+        *)
+            print_warning "Node.js auto-install not supported on $OS. Please install Node 22 manually if needed."
+            return 0
+            ;;
     esac
 
-    print_success "Node.js installed: $(node --version)"
+    if command -v node &> /dev/null && command -v npm &> /dev/null; then
+        print_success "Node.js installed: $(node --version) / npm $(npm --version)"
+    else
+        print_warning "Node.js installation did not complete successfully. Please install Node 22 manually."
+    fi
 }
 
 clone_repository() {
     print_header "Cloning Repository"
+
+    local target_branch
+    target_branch=$(resolve_branch)
 
     if [[ -d "$DEPLOY_DIR" ]]; then
         print_warning "Directory $DEPLOY_DIR already exists"
@@ -173,17 +179,34 @@ clone_repository() {
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             cd "$DEPLOY_DIR"
-            git fetch origin
-            git checkout $BRANCH
-            git pull origin $BRANCH
+            git fetch origin "$target_branch"
+            git checkout "$target_branch"
+            git pull --ff-only origin "$target_branch"
             print_success "Repository updated"
         fi
     else
         mkdir -p "$DEPLOY_DIR"
-        git clone -b $BRANCH "$REPO_URL" "$DEPLOY_DIR"
+        git clone --branch "$target_branch" --single-branch "$REPO_URL" "$DEPLOY_DIR"
         cd "$DEPLOY_DIR"
         print_success "Repository cloned to $DEPLOY_DIR"
     fi
+}
+
+resolve_branch() {
+    local requested_branch="$BRANCH"
+
+    if git ls-remote --exit-code --heads "$REPO_URL" "$requested_branch" > /dev/null 2>&1; then
+        echo "$requested_branch"
+        return 0
+    fi
+
+    if [[ "$requested_branch" != "$DEFAULT_BRANCH" ]] && git ls-remote --exit-code --heads "$REPO_URL" "$DEFAULT_BRANCH" > /dev/null 2>&1; then
+        print_warning "Branch '$requested_branch' not found. Falling back to '$DEFAULT_BRANCH'."
+        echo "$DEFAULT_BRANCH"
+        return 0
+    fi
+
+    print_error "Branch '$requested_branch' not found in $REPO_URL."
 }
 
 create_env_file() {

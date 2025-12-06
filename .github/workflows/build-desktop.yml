@@ -1,0 +1,118 @@
+name: Build Desktop App
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build web app
+        run: cd web && npm install && npm run build
+
+      - name: Build macOS app (${{ matrix.arch }})
+        run: npm run desktop:pack -- --mac --arch=${{ matrix.arch }}
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: PumpLauncher-macOS-${{ matrix.arch }}
+          path: dist/PumpLauncher-*.dmg
+          retention-days: 30
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build web app
+        run: |
+          cd web
+          npm install
+          npm run build
+
+      - name: Build Windows app
+        run: npm run desktop:pack -- --win
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: PumpLauncher-Windows
+          path: dist/PumpLauncher-*.exe
+          retention-days: 30
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev
+          npm install
+
+      - name: Build web app
+        run: cd web && npm install && npm run build
+
+      - name: Build Linux app
+        run: npm run desktop:pack -- --linux
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: PumpLauncher-Linux
+          path: dist/PumpLauncher-*.AppImage
+          retention-days: 30
+
+  create-release:
+    needs: [build-macos, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            PumpLauncher-macOS-x64/PumpLauncher-*.dmg
+            PumpLauncher-macOS-arm64/PumpLauncher-*.dmg
+            PumpLauncher-Windows/PumpLauncher-*.exe
+            PumpLauncher-Linux/PumpLauncher-*.AppImage
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

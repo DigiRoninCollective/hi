@@ -1,0 +1,85 @@
+import { app, BrowserWindow, nativeTheme, shell, ipcMain } from 'electron'
+import path from 'path'
+import { registerIpcHandlers } from './ipc-handlers'
+
+const isDev = process.argv.includes('dev')
+let mainWindow: BrowserWindow | null = null
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1320,
+    height: 900,
+    backgroundColor: '#0d0d0d',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+
+  if (isDev) {
+    mainWindow.loadURL('http://localhost:5173')
+    mainWindow.webContents.openDevTools({ mode: 'detach' })
+  } else {
+    const indexPath = path.join(__dirname, '..', 'web', 'dist', 'index.html')
+    mainWindow.loadFile(indexPath)
+  }
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http')) {
+      shell.openExternal(url)
+      return { action: 'deny' }
+    }
+    return { action: 'allow' }
+  })
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url.startsWith('http')) {
+      event.preventDefault()
+      shell.openExternal(url)
+    }
+  })
+}
+
+function registerNavigationHandlers() {
+  ipcMain.handle('open-external', (_event, url) => shell.openExternal(url))
+
+  ipcMain.handle('go-back', () => {
+    if (mainWindow && mainWindow.webContents.canGoBack()) {
+      mainWindow.webContents.goBack()
+    }
+  })
+
+  ipcMain.handle('go-forward', () => {
+    if (mainWindow && mainWindow.webContents.canGoForward()) {
+      mainWindow.webContents.goForward()
+    }
+  })
+
+  ipcMain.handle('can-go-back', () => {
+    return mainWindow ? mainWindow.webContents.canGoBack() : false
+  })
+
+  ipcMain.handle('can-go-forward', () => {
+    return mainWindow ? mainWindow.webContents.canGoForward() : false
+  })
+}
+
+app.whenReady().then(() => {
+  nativeTheme.themeSource = 'dark'
+  registerIpcHandlers()
+  registerNavigationHandlers()
+  createWindow()
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow()
+    }
+  })
+})
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit()
+  }
+})

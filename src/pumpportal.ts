@@ -4,7 +4,6 @@ import {
   VersionedTransaction,
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
-import bs58 from 'bs58';
 import fetch from 'node-fetch';
 import {
   SolanaConfig,
@@ -13,6 +12,7 @@ import {
 } from './types';
 import { ZkMixerService, ZkProofRequest } from './zk-mixer.service';
 import { MintKeyManager } from './mint-key-manager';
+import { loadKeypairFromSecret } from './utils/secure-wallet';
 
 const PUMPPORTAL_API_URL = 'https://pumpportal.fun/api';
 
@@ -30,7 +30,7 @@ export class PumpPortalService {
     db?: any // Optional Supabase client for MintKeyManager
   ) {
     this.connection = new Connection(solanaConfig.rpcUrl, 'confirmed');
-    this.wallet = Keypair.fromSecretKey(bs58.decode(solanaConfig.privateKey));
+    this.wallet = loadKeypairFromSecret(solanaConfig.privateKey, 'SOLANA_PRIVATE_KEY');
     this.defaults = defaults;
     this.zkMixer = zkMixer;
     this.mintKeyManager = new MintKeyManager(db);

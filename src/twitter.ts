@@ -1,7 +1,7 @@
 import { TwitterApi, TweetStream, ETwitterStreamEvent, TweetV2SingleStreamResult } from 'twitter-api-v2';
 import { TwitterConfig, TweetData, LaunchEventHandler } from './types';
 import { GroqService } from './groq.service';
-import { sendTelegramAlert } from './telegram-alert';
+import { sendTelegramAlert } from './services/notifications/telegram-alert';
 
 export class TwitterStreamService {
   private client: TwitterApi;

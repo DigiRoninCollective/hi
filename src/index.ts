@@ -3,7 +3,7 @@ import { TwitterStreamService } from './twitter';
 import { PumpPortalService } from './pumpportal';
 import { SSEServer } from './sse-server';
 import { TweetClassifier } from './classifier';
-import { AlertingService } from './alerting';
+import { AlertingService } from './services/notifications/alerting';
 import { eventBus, EventType, EventBus } from './events';
 import { ParsedLaunchCommand, TweetData } from './types';
 import { buildLaunchCandidate } from './launch-candidate';
